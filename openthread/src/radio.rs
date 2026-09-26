@@ -339,6 +339,131 @@ impl Default for SrcMatchConfig {
     }
 }
 
+/// The MAC keys of key identifier mode 1, as OpenThread hands them to a
+/// radio that reports [`Capabilities::TRANSMIT_SEC`] (`otPlatRadioSetMacKey`).
+#[derive(Clone, Eq, PartialEq, Hash)]
+pub struct MacKeys {
+    /// The key identifier mode the keys belong to (always 1 for Thread).
+    pub key_id_mode: u8,
+    /// The key index of [`current`](Self::current).
+    pub key_id: u8,
+    /// The key of key index `key_id - 1`.
+    pub previous: [u8; 16],
+    /// The key of key index `key_id`.
+    pub current: [u8; 16],
+    /// The key of key index `key_id + 1`.
+    pub next: [u8; 16],
+}
+
+impl Debug for MacKeys {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        // The key material stays out of logs.
+        f.debug_struct("MacKeys")
+            .field("key_id_mode", &self.key_id_mode)
+            .field("key_id", &self.key_id)
+            .finish_non_exhaustive()
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for MacKeys {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        defmt::write!(
+            f,
+            "MacKeys {{ key_id_mode: {}, key_id: {}, .. }}",
+            self.key_id_mode,
+            self.key_id
+        )
+    }
+}
+
+/// A change of the MAC frame counter of a radio that reports
+/// [`Capabilities::TRANSMIT_SEC`].
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum FrameCounterUpdate {
+    /// Replace the counter (`otPlatRadioSetMacFrameCounter`).
+    Set(u32),
+    /// Raise the counter to at least this value
+    /// (`otPlatRadioSetMacFrameCounterIfLarger`).
+    SetIfLarger(u32),
+}
+
+impl FrameCounterUpdate {
+    /// The update equivalent to applying `self`, then `later`.
+    pub const fn then(self, later: Self) -> Self {
+        match (self, later) {
+            (_, Self::Set(counter)) => Self::Set(counter),
+            (Self::Set(first), Self::SetIfLarger(counter)) => {
+                Self::Set(if counter > first { counter } else { first })
+            }
+            (Self::SetIfLarger(first), Self::SetIfLarger(counter)) => {
+                Self::SetIfLarger(if counter > first { counter } else { first })
+            }
+        }
+    }
+
+    /// Apply the update to `counter`.
+    pub fn apply(self, counter: &mut u32) {
+        match self {
+            Self::Set(value) => *counter = value,
+            Self::SetIfLarger(value) => *counter = (*counter).max(value),
+        }
+    }
+}
+
+/// One frame to transmit, with the transmit information of OpenThread's
+/// `otRadioFrame` a radio that reports [`Capabilities::TRANSMIT_SEC`] needs.
+#[derive(Debug)]
+pub struct TxFrame<'a> {
+    /// The PSDU to transmit.
+    ///
+    /// A radio that secures the frame writes the auxiliary security header
+    /// fields it assigns - the frame counter and, in key identifier mode 1,
+    /// the key index - back into these bytes and sets
+    /// [`header_updated`](Self::header_updated), as OpenThread's
+    /// `otMacFrameSetFrameCounter` and `otMacFrameSetKeyId` do on the
+    /// platform's frame. It never writes the encrypted payload or the MIC
+    /// back.
+    pub psdu: &'a mut [u8],
+    /// The channel to transmit the frame on.
+    pub channel: u8,
+    /// The transmit power, in dBm.
+    pub power: i8,
+    /// The CCA threshold to use before transmitting the frame; `None` skips
+    /// the CCA.
+    pub cca_threshold: Option<i8>,
+    /// The frame retransmits one the radio already secured: it keeps the
+    /// frame counter and key index it carries (`mIsARetx`).
+    pub retransmission: bool,
+    /// OpenThread already secured the frame; the radio transmits it as
+    /// given (`mIsSecurityProcessed`).
+    pub security_processed: bool,
+    /// Set by the radio when it wrote security header fields into
+    /// [`psdu`](Self::psdu), including when the transmission then failed.
+    pub header_updated: bool,
+}
+
+/// The security of an enhanced acknowledgement the radio sent.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct AckSecurity {
+    /// The frame counter the acknowledgement carried.
+    pub frame_counter: u32,
+    /// The key index the acknowledgement carried.
+    pub key_id: u8,
+}
+
+/// The acknowledgement the radio sent for a received frame.
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct SentAck {
+    /// The acknowledgement set the Frame Pending bit.
+    pub frame_pending: bool,
+    /// The frame was acknowledged with a secured enhanced acknowledgement.
+    pub security: Option<AckSecurity>,
+}
+
 /// Meta-data associated with the received IEEE 802.15.4 frame
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -354,6 +479,10 @@ pub struct PsduMeta {
     /// radio; `None` if the radio does not report one, in which case the
     /// OpenThread glue synthesizes an LQI from the RSSI.
     pub lqi: Option<u8>,
+    /// For a received frame, the acknowledgement the radio sent for it, if
+    /// the radio reports one; `None` makes the OpenThread glue derive the
+    /// Frame Pending answer from the source-match table.
+    pub ack: Option<SentAck>,
 }
 
 /// The IEEE 802.15.4 PHY Radio trait.
@@ -413,7 +542,11 @@ pub struct PsduMeta {
 /// The trait is NOT required to support the following operations:
 /// - Re-sending a TX frame if the ACK frame was not received; this is done by OpenThread
 /// - Dropping a duplicate RX frame; this is done by OpenThread
-/// - MAC layer security; this is done by OpenThread
+/// - MAC layer security; this is done by OpenThread, unless the radio reports
+///   [`Capabilities::TRANSMIT_SEC`] and implements
+///   [`set_mac_keys`](Radio::set_mac_keys),
+///   [`set_mac_frame_counter`](Radio::set_mac_frame_counter) and
+///   [`transmit_frame`](Radio::transmit_frame)
 pub trait Radio {
     /// The error type for radio operations.
     type Error: RadioError;
@@ -540,6 +673,58 @@ pub trait Radio {
     /// Returns:
     /// - The meta-data associated with the received frame.
     async fn receive(&mut self, psdu_buf: &mut [u8]) -> Result<PsduMeta, Self::Error>;
+
+    /// Set the MAC keys of key identifier mode 1 (`otPlatRadioSetMacKey`).
+    ///
+    /// Only called for a radio that reports [`Capabilities::TRANSMIT_SEC`],
+    /// before any transmission that needs them. The default ignores them.
+    async fn set_mac_keys(&mut self, keys: &MacKeys) -> Result<(), Self::Error> {
+        let _ = keys;
+
+        Ok(())
+    }
+
+    /// Change the MAC frame counter the radio secures frames and enhanced
+    /// ACKs with (`otPlatRadioSetMacFrameCounter`,
+    /// `otPlatRadioSetMacFrameCounterIfLarger`).
+    ///
+    /// Only called for a radio that reports [`Capabilities::TRANSMIT_SEC`],
+    /// before any transmission that follows the change. The default ignores
+    /// it.
+    async fn set_mac_frame_counter(
+        &mut self,
+        update: FrameCounterUpdate,
+    ) -> Result<(), Self::Error> {
+        let _ = update;
+
+        Ok(())
+    }
+
+    /// Transmit a radio frame with its transmit information.
+    ///
+    /// The OpenThread glue calls this method, not [`transmit`](Radio::transmit).
+    /// A radio that reports [`Capabilities::TRANSMIT_SEC`] must implement it:
+    /// it secures a frame whose security is enabled unless
+    /// [`TxFrame::security_processed`] is set - a new frame counter and key
+    /// index unless [`TxFrame::retransmission`] is set - and writes the
+    /// fields it assigned back into [`TxFrame::psdu`]. The default
+    /// transmits the frame as given through [`transmit`](Radio::transmit).
+    ///
+    /// Arguments and returns are those of [`transmit`](Radio::transmit).
+    async fn transmit_frame(
+        &mut self,
+        frame: &mut TxFrame<'_>,
+        ack_psdu_buf: Option<&mut [u8]>,
+    ) -> Result<Option<PsduMeta>, Self::Error> {
+        self.transmit(
+            frame.psdu,
+            frame.channel,
+            frame.power,
+            frame.cca_threshold,
+            ack_psdu_buf,
+        )
+        .await
+    }
 }
 
 impl<T> Radio for &mut T
@@ -585,5 +770,24 @@ where
 
     async fn receive(&mut self, psdu_buf: &mut [u8]) -> Result<PsduMeta, Self::Error> {
         T::receive(self, psdu_buf).await
+    }
+
+    async fn set_mac_keys(&mut self, keys: &MacKeys) -> Result<(), Self::Error> {
+        T::set_mac_keys(self, keys).await
+    }
+
+    async fn set_mac_frame_counter(
+        &mut self,
+        update: FrameCounterUpdate,
+    ) -> Result<(), Self::Error> {
+        T::set_mac_frame_counter(self, update).await
+    }
+
+    async fn transmit_frame(
+        &mut self,
+        frame: &mut TxFrame<'_>,
+        ack_psdu_buf: Option<&mut [u8]>,
+    ) -> Result<Option<PsduMeta>, Self::Error> {
+        T::transmit_frame(self, frame, ack_psdu_buf).await
     }
 }

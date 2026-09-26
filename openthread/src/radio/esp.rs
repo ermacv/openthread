@@ -265,6 +265,7 @@ impl Radio for EspRadio<'_> {
                                 channel: ack_frame.channel,
                                 rssi,
                                 lqi: None,
+                                ack: None,
                             }));
                         } else {
                             trace!(
@@ -338,6 +339,7 @@ impl Radio for EspRadio<'_> {
             channel: raw.channel,
             rssi,
             lqi: None,
+            ack: None,
         })
     }
 }

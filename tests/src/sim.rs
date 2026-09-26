@@ -331,6 +331,7 @@ impl Radio for SimRadio {
                 // every frame; the `expect` suites' scan/discover scripts
                 // match on exactly that.
                 lqi: Some(0),
+                ack: None,
             });
         }
     }

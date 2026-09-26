@@ -8,7 +8,10 @@ use embassy_sync::blocking_mutex::Mutex;
 
 use openthread_sys::otError_OT_ERROR_NONE;
 
-use crate::sys::{otError, otInstance, otLogLevel, otLogRegion, otRadioCaps, otRadioFrame};
+use crate::sys::{
+    otError, otInstance, otLogLevel, otLogRegion, otMacKeyMaterial, otRadioCaps, otRadioFrame,
+    otRadioKeyType, otRadioKeyType_OT_KEY_TYPE_LITERAL_KEY,
+};
 use crate::{IntoOtCode, OtActiveState, OtContext};
 
 /// A hack so that we can store a mutable reference to the active state in a global static variable
@@ -221,6 +224,52 @@ extern "C" fn otPlatRadioReceive(instance: *mut otInstance, channel: u8) -> otEr
     OtContext::callback(instance)
         .plat_radio_receive(channel)
         .into_ot_code()
+}
+
+// --- Transmit security (radios reporting `OT_RADIO_CAPS_TRANSMIT_SEC`) ---
+//
+// OpenThread hands the MAC keys and frame counter to the platform only when
+// the radio secures frames itself (`SubMac::ShouldHandleTransmitSecurity`).
+
+#[no_mangle]
+extern "C" fn otPlatRadioSetMacKey(
+    instance: *mut otInstance,
+    key_id_mode: u8,
+    key_id: u8,
+    previous: *const otMacKeyMaterial,
+    current: *const otMacKeyMaterial,
+    next: *const otMacKeyMaterial,
+    key_type: otRadioKeyType,
+) {
+    // This crate builds OpenThread without platform key references, so the
+    // keys arrive as literal bytes.
+    if key_type != otRadioKeyType_OT_KEY_TYPE_LITERAL_KEY {
+        warn!("Ignoring MAC keys of key type {}", key_type);
+        return;
+    }
+
+    let literal = |key: *const otMacKeyMaterial| unsafe { (*key).mKeyMaterial.mKey.m8 };
+
+    OtContext::callback(instance).plat_radio_set_mac_keys(crate::radio::MacKeys {
+        key_id_mode,
+        key_id,
+        previous: literal(previous),
+        current: literal(current),
+        next: literal(next),
+    });
+}
+
+#[no_mangle]
+extern "C" fn otPlatRadioSetMacFrameCounter(instance: *mut otInstance, frame_counter: u32) {
+    OtContext::callback(instance)
+        .plat_radio_set_mac_frame_counter(crate::radio::FrameCounterUpdate::Set(frame_counter));
+}
+
+#[no_mangle]
+extern "C" fn otPlatRadioSetMacFrameCounterIfLarger(instance: *mut otInstance, frame_counter: u32) {
+    OtContext::callback(instance).plat_radio_set_mac_frame_counter(
+        crate::radio::FrameCounterUpdate::SetIfLarger(frame_counter),
+    );
 }
 
 // --- Source-address match (FTD only) ---

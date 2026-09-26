@@ -1691,6 +1691,7 @@ where
                     channel: ack_channel.unwrap_or(channel),
                     rssi: ack_rssi,
                     lqi: ack_lqi,
+                    ack: None,
                 }))
             }
             // The caller didn't ask for the ACK PSDU (didn't expect an ACK), so
@@ -1725,6 +1726,7 @@ where
                     channel: rx_channel.unwrap_or(cfg_channel),
                     rssi,
                     lqi,
+                    ack: None,
                 });
             }
             // Unparseable stashed frame — skip and try the next.
@@ -1752,6 +1754,7 @@ where
                     channel: rx_channel.unwrap_or(cfg_channel),
                     rssi,
                     lqi,
+                    ack: None,
                 });
             }
             // Other frames (matched responses to a concurrent op, status) — ignore.

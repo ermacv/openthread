@@ -431,6 +431,7 @@ impl Radio for VtRadio {
                 rssi: Some(SIM_RSSI),
                 // As in `SimRadio`: the C simulation platform's LQI.
                 lqi: Some(0),
+                ack: None,
             });
         }
     }

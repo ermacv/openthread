@@ -139,6 +139,29 @@ Radios without the capability get the core's software fallback (which needs a sy
 
 Active scan is NOT a distinct radio state: it is an ordinary Receive on the scan channel plus a Beacon Request transmit - which is exactly why it depends on C4.
 
+### C9. Transmit security belongs to the radio only when it says so before the instance exists
+
+With `OT_RADIO_CAPS_TRANSMIT_SEC`, `SubMac` stops securing key identifier
+mode 1 frames and hands the radio the MAC keys (`otPlatRadioSetMacKey`) and
+the frame counter (`otPlatRadioSetMacFrameCounter[IfLarger]`) instead. The
+radio then assigns each first transmission a new frame counter and key
+index, keeps both for a retransmission (`mIsARetx`), leaves frames the core
+secured itself alone (`mIsSecurityProcessed`, key identifier modes 0 and 2)
+and writes the fields it assigned into the platform's frame, marking its
+header updated: `SubMac::SignalFrameCounterUsedOnTxDone` reads the counter
+back from the frame, and `SubMac` retransmits from the same buffer. A
+secured enhanced ACK consumes a counter too; the platform reports it in the
+received frame (`mAckedWithSecEnhAck`, `mAckFrameCounter`, `mAckKeyId`).
+
+`SubMac` snapshots the capabilities when the instance is constructed, before
+a `Radio` exists in this crate, so the capability takes effect only when
+declared up front (`OtResources::set_radio_caps`). The crate carries the
+transmit information in `TxFrame` (`Radio::transmit_frame`), copies the
+written header back into both its frames, forwards keys and counter changes
+before the next transmission and fills the receive information from
+`PsduMeta::ack`. `MacRadio` and `ProxyRadio` do not forward security and
+clear the capability.
+
 ## The radio state machine
 
 ```

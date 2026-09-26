@@ -1339,6 +1339,32 @@ impl<'a> OpenThread<'a> {
             let mut activated = self.activate();
             let state = activated.state();
 
+            // `SubMac` decides what it leaves to the radio from the
+            // capabilities the instance was built with.
+            let declared = radio::Capabilities::from_bits_truncate(state.ot.radio_caps);
+            let decisive = radio::Capabilities::TRANSMIT_SEC
+                | radio::Capabilities::CSMA_BACKOFF
+                | radio::Capabilities::TRANSMIT_RETRIES
+                | radio::Capabilities::SLEEP_TO_TX
+                | radio::Capabilities::TRANSMIT_TIMING
+                | radio::Capabilities::RECEIVE_TIMING;
+
+            // A stack that leaves security to a radio without it would
+            // transmit secured frames in the clear.
+            assert!(
+                caps.phy.contains(radio::Capabilities::TRANSMIT_SEC)
+                    || !declared.contains(radio::Capabilities::TRANSMIT_SEC),
+                "`OtResources::set_radio_caps` declared transmit security the radio does not report"
+            );
+
+            let undeclared = caps.phy.intersection(decisive).difference(declared);
+            if !undeclared.is_empty() {
+                warn!(
+                    "Radio capabilities {:?} are unused: declare them with `OtResources::set_radio_caps`",
+                    undeclared
+                );
+            }
+
             state.ot.radio_caps = caps.phy.bits();
             state.ot.radio_sensitivity = caps.receive_sensitivity;
             state.ot.radio_cca_threshold = caps.default_cca_threshold;
@@ -1383,6 +1409,8 @@ impl<'a> OpenThread<'a> {
                     trace!("Radio configuration changed: {:?}", conf);
 
                     unwrap_dbg!(radio.set_config(&conf).await);
+
+                    self.apply_radio_security(&mut radio).await;
                 }
                 Either3::Second(_) => {
                     let src = {
@@ -1406,6 +1434,9 @@ impl<'a> OpenThread<'a> {
                         // whole job by waking the runner.
                         RadioCommand::Interrupt => (),
                         RadioCommand::Tx => {
+                            // Keys and counter changes precede the frame that needs them.
+                            self.apply_radio_security(&mut radio).await;
+
                             let mut tx = pin!(self.process_radio_tx(
                                 &mut radio,
                                 &mut psdu_buf,
@@ -1429,6 +1460,35 @@ impl<'a> OpenThread<'a> {
                     }
                 }
             }
+        }
+    }
+
+    /// Hand the MAC keys and frame counter changes OpenThread made since the
+    /// last call to the radio.
+    async fn apply_radio_security<R>(&self, mut radio: R)
+    where
+        R: Radio,
+    {
+        let (keys, frame_counter) = {
+            let mut ot = self.activate();
+            let state = ot.state();
+
+            (
+                state.ot.radio_mac_keys.take(),
+                state.ot.radio_frame_counter.take(),
+            )
+        };
+
+        if let Some(keys) = keys {
+            trace!("Radio MAC keys changed: {:?}", keys);
+
+            unwrap_dbg!(radio.set_mac_keys(&keys).await);
+        }
+
+        if let Some(update) = frame_counter {
+            trace!("Radio MAC frame counter changed: {:?}", update);
+
+            unwrap_dbg!(radio.set_mac_frame_counter(update).await);
         }
     }
 
@@ -1466,9 +1526,14 @@ impl<'a> OpenThread<'a> {
                     }
 
                     // Computed before `radio_resources`
-                    // takes its mutable borrow.
-                    let acked_with_fp =
-                        Self::acked_with_frame_pending(rcv_psdu, &state.ot.radio_conf_src_match);
+                    // takes its mutable borrow. A radio that reports the
+                    // ACK it sent answers for itself.
+                    let acked_with_fp = match rcv_psdu_meta.ack {
+                        Some(ack) => ack.frame_pending,
+                        None => {
+                            Self::acked_with_frame_pending(rcv_psdu, &state.ot.radio_conf_src_match)
+                        }
+                    };
                     let radio_resources = &mut state.ot.radio_resources;
 
                     Self::fill_frame(
@@ -1508,11 +1573,12 @@ impl<'a> OpenThread<'a> {
     where
         R: Radio,
     {
-        let (cca_threshold, channel, power, psdu_len) = {
+        let (cca_threshold, channel, power, psdu_len, retransmission, security_processed) = {
             let mut ot = self.activate();
             let state = ot.state();
 
-            let cca = unsafe { state.ot.radio_resources.snd_frame.mInfo.mTxInfo }.mCsmaCaEnabled();
+            let tx_info = unsafe { state.ot.radio_resources.snd_frame.mInfo.mTxInfo };
+            let cca = tx_info.mCsmaCaEnabled();
             let channel = state.ot.radio_resources.snd_frame.mChannel;
 
             let psdu_len = state.ot.radio_resources.snd_frame.mLength as usize;
@@ -1527,6 +1593,8 @@ impl<'a> OpenThread<'a> {
                 channel,
                 state.ot.radio_tx_power,
                 psdu_len,
+                tx_info.mIsARetx(),
+                tx_info.mIsSecurityProcessed(),
             )
         };
 
@@ -1542,19 +1610,48 @@ impl<'a> OpenThread<'a> {
             }
         });
 
-        let result = radio
-            .transmit(
-                &psdu_buf[..psdu_len],
-                channel,
-                power,
-                cca_threshold,
-                Some(ack_psdu_buf),
-            )
-            .await;
+        let mut frame = radio::TxFrame {
+            psdu: &mut psdu_buf[..psdu_len],
+            channel,
+            power,
+            cca_threshold,
+            retransmission,
+            security_processed,
+            header_updated: false,
+        };
+
+        let result = radio.transmit_frame(&mut frame, Some(ack_psdu_buf)).await;
+
+        let header_updated = frame.header_updated;
 
         {
             let mut ot = self.activate();
             let state = ot.state();
+
+            if header_updated {
+                // The radio assigned the frame counter and key index. They
+                // go into both OpenThread's transmit buffer - which `SubMac`
+                // retransmits from - and the frame handed to
+                // `otPlatRadioTxDone`, as a platform writing them with
+                // `otMacFrameSetFrameCounter` into its only frame would.
+                let radio_resources = &mut state.ot.radio_resources;
+
+                radio_resources.snd_psdu[..psdu_len].copy_from_slice(&psdu_buf[..psdu_len]);
+                radio_resources.tns_psdu[..psdu_len].copy_from_slice(&psdu_buf[..psdu_len]);
+
+                unsafe {
+                    radio_resources
+                        .snd_frame
+                        .mInfo
+                        .mTxInfo
+                        .set_mIsHeaderUpdated(true);
+                    radio_resources
+                        .tns_frame
+                        .mInfo
+                        .mTxInfo
+                        .set_mIsHeaderUpdated(true);
+                }
+            }
 
             if let Some(rssi) = result.as_ref().ok().and_then(|m| m.and_then(|m| m.rssi)) {
                 state.ot.last_rssi = rssi;
@@ -1796,6 +1893,22 @@ impl<'a> OpenThread<'a> {
                 .mRxInfo
                 .set_mAckedWithFramePending(acked_with_fp);
         }
+
+        // A secured enhanced ACK consumed a frame counter of the radio's;
+        // `SubMac::HandleReceiveDone` accounts for it.
+        let ack_security = psdu_meta.ack.and_then(|ack| ack.security);
+
+        unsafe {
+            frame
+                .mInfo
+                .mRxInfo
+                .set_mAckedWithSecEnhAck(ack_security.is_some());
+        }
+
+        if let Some(security) = ack_security {
+            frame.mInfo.mRxInfo.mAckFrameCounter = security.frame_counter;
+            frame.mInfo.mRxInfo.mAckKeyId = security.key_id;
+        }
     }
 }
 
@@ -1849,16 +1962,40 @@ pub struct OtResources {
     /// so that this self-referencial borrowing happens only while `OtResources` itself stays mutably
     /// borrowed, while is the case until the `OpenThread` instance is dropped.
     state: MaybeUninit<RefCell<OtState<'static>>>,
+    /// The radio capabilities OpenThread sees when its instance is built.
+    radio_caps: otRadioCaps,
 }
 
 impl OtResources {
+    /// The capabilities advertised before the radio reports its own: see
+    /// [`Self::set_radio_caps`].
+    const INITIAL_RADIO_CAPS: otRadioCaps =
+        (OT_RADIO_CAPS_ACK_TIMEOUT | sys::OT_RADIO_CAPS_ENERGY_SCAN) as otRadioCaps;
+
     /// Create a new `OtResources` instance.
     pub const fn new() -> Self {
         Self {
             radio_resources: MaybeUninit::uninit(),
             dataset_resources: MaybeUninit::uninit(),
             state: MaybeUninit::uninit(),
+            radio_caps: Self::INITIAL_RADIO_CAPS,
         }
+    }
+
+    /// Declare the PHY capabilities the radio will report from
+    /// [`Radio::init`], before the OpenThread instance is built.
+    ///
+    /// OpenThread's `SubMac` snapshots `otPlatRadioGetCaps` when the
+    /// instance is constructed, which happens before a `Radio` is known, so
+    /// capabilities that decide what the stack leaves to the radio - such
+    /// as [`radio::Capabilities::TRANSMIT_SEC`] or
+    /// [`radio::Capabilities::SLEEP_TO_TX`] - take effect only when
+    /// declared here. [`radio::Capabilities::ENERGY_SCAN`] is always
+    /// advertised (see [`Radio::energy_scan`]). The radio runner warns when
+    /// the radio later reports a different set.
+    pub fn set_radio_caps(&mut self, caps: radio::Capabilities) {
+        self.radio_caps =
+            caps.bits() as otRadioCaps | sys::OT_RADIO_CAPS_ENERGY_SCAN as otRadioCaps;
     }
 
     /// Initialize the resources, as they start their life as `MaybeUninit` so as to avoid mem-moves.
@@ -1918,6 +2055,8 @@ impl OtResources {
             radio_conf_changed: Signal::new(),
             radio_conf_src_match: radio::SrcMatchConfig::default(),
             radio_conf_src_match_changed: Signal::new(),
+            radio_mac_keys: None,
+            radio_frame_counter: None,
             radio_cmd: Signal::new(),
             radio_enabled: false,
             radio_receive_channel: None,
@@ -1939,7 +2078,7 @@ impl OtResources {
             // (OpenThread's software sampling fallback) cannot work here
             // anyway, as it needs a synchronous RSSI read (`otPlatRadioGetRssi`)
             // which is unimplementable on top of an async radio.
-            radio_caps: (OT_RADIO_CAPS_ACK_TIMEOUT | sys::OT_RADIO_CAPS_ENERGY_SCAN) as otRadioCaps,
+            radio_caps: self.radio_caps,
             radio_sensitivity: radio::RadioCaps::DEFAULT_RECEIVE_SENSITIVITY,
             radio_cca_threshold: radio::RadioCaps::DEFAULT_CCA_THRESHOLD,
             radio_tx_power: radio::RadioCaps::DEFAULT_TX_POWER,
@@ -2980,6 +3119,30 @@ impl<'a> OtContext<'a> {
         }
     }
 
+    fn plat_radio_set_mac_keys(&mut self, keys: radio::MacKeys) {
+        trace!("Plat radio set MAC keys callback, keys: {:?}", keys);
+
+        let state = self.state();
+
+        state.ot.radio_mac_keys = Some(keys);
+        state.ot.radio_conf_changed.signal(());
+    }
+
+    fn plat_radio_set_mac_frame_counter(&mut self, update: radio::FrameCounterUpdate) {
+        trace!(
+            "Plat radio set MAC frame counter callback, update: {:?}",
+            update
+        );
+
+        let state = self.state();
+
+        state.ot.radio_frame_counter = Some(match state.ot.radio_frame_counter {
+            Some(pending) => pending.then(update),
+            None => update,
+        });
+        state.ot.radio_conf_changed.signal(());
+    }
+
     fn plat_radio_enable_src_match(&mut self, enable: bool) {
         trace!("Plat radio enable src match callback, enable: {}", enable);
 
@@ -3280,6 +3443,11 @@ struct OtState<'a> {
     radio_conf_src_match: radio::SrcMatchConfig,
     /// Raised whenever the source-address-match table changes; consumed by the radio runner.
     radio_conf_src_match_changed: Signal<()>,
+    /// MAC keys (`otPlatRadioSetMacKey`) not yet handed to the radio.
+    radio_mac_keys: Option<radio::MacKeys>,
+    /// A MAC frame counter change (`otPlatRadioSetMacFrameCounter*`) not yet
+    /// handed to the radio.
+    radio_frame_counter: Option<radio::FrameCounterUpdate>,
     /// Raised whenever the radio needs to execute the provided command.
     radio_cmd: Signal<RadioCommand>,
     /// Whether the radio is enabled (`otPlatRadioEnable`/`Disable`).

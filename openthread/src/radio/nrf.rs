@@ -222,6 +222,7 @@ impl Radio for NrfRadio<'_> {
                 channel,
                 rssi: Some(rssi),
                 lqi: Some(packet.lqi()),
+                ack: None,
             });
         }
     }

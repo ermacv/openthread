@@ -376,7 +376,12 @@ where
 
         self.power = caps.default_tx_power;
 
-        Ok(RadioCaps { mac, ..caps })
+        // Transmit security is not forwarded through the software MAC, so
+        // OpenThread keeps securing frames itself.
+        let mut phy = caps.phy;
+        phy.remove(crate::Capabilities::TRANSMIT_SEC);
+
+        Ok(RadioCaps { phy, mac, ..caps })
     }
 
     async fn set_receive(&mut self, channel: u8) -> Result<(), Self::Error> {
@@ -655,6 +660,7 @@ impl PendingRxFrame {
                 channel: 0,
                 rssi: None,
                 lqi: None,
+                ack: None,
             },
             psdu: [0; OT_RADIO_FRAME_MAX_SIZE as _],
         }
