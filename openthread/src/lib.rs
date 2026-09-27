@@ -1421,6 +1421,7 @@ impl<'a> OpenThread<'a> {
 
             state.ot.radio_caps = caps.phy.bits();
             state.ot.radio_clock = radio.clock();
+            state.ot.radio_rssi = radio.rssi();
             state.ot.radio_csl_accuracy = caps.csl_accuracy;
             state.ot.radio_csl_uncertainty = caps.csl_uncertainty;
             state.ot.radio_sensitivity = caps.receive_sensitivity;
@@ -2183,6 +2184,7 @@ impl OtResources {
             },
             radio_enh_ack_probing_changed: false,
             radio_clock: radio::embassy_radio_clock,
+            radio_rssi: None,
             radio_csl_accuracy: radio::RadioCaps::UNKNOWN_CSL_TIMING,
             radio_csl_uncertainty: radio::RadioCaps::UNKNOWN_CSL_TIMING,
             #[cfg(feature = "csl")]
@@ -2971,7 +2973,11 @@ impl<'a> OtContext<'a> {
     }
 
     fn plat_radio_get_rssi(&mut self) -> i8 {
-        let rssi = self.state().ot.last_rssi;
+        let state = self.state();
+        let rssi = match state.ot.radio_rssi {
+            Some(read) => read().unwrap_or(OT_RADIO_RSSI_INVALID as i8),
+            None => state.ot.last_rssi,
+        };
         trace!("Plat radio get RSSI callback, RSSI: {}", rssi);
 
         rssi
@@ -3696,6 +3702,8 @@ struct OtState<'a> {
     radio_enh_ack_probing_changed: bool,
     /// The radio clock (`otPlatRadioGetNow`).
     radio_clock: radio::RadioClock,
+    /// The radio's live RSSI read (`otPlatRadioGetRssi`), if it has one.
+    radio_rssi: Option<radio::RadioRssi>,
     /// `otPlatRadioGetCslAccuracy`, from the radio's capabilities.
     radio_csl_accuracy: u8,
     /// `otPlatRadioGetCslUncertainty`, from the radio's capabilities.
@@ -3712,7 +3720,7 @@ struct OtState<'a> {
     /// The channel the radio is commanded to receive on, or `None` if the radio is not commanded to receive.
     radio_receive_channel: Option<u8>,
     /// The RSSI of the most recently received frame (ACKs included).
-    /// Used to answer `otPlatRadioGetRssi` which is synchronous.
+    /// Answers `otPlatRadioGetRssi` for a radio without a live RSSI read.
     last_rssi: i8,
     /// Radio capabilities reported to OpenThread via otPlatRadioGetCaps.
     /// Fetched from the actual radio trait in the `OpenThread::run` API.
