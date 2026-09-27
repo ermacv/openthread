@@ -1535,13 +1535,13 @@ impl<'a> OpenThread<'a> {
         }
     }
 
-    /// Hand the MAC keys, frame counter and CSL changes OpenThread made since
-    /// the last call to the radio.
+    /// Hand the MAC keys, frame counter, CSL and enhanced-ACK probing
+    /// changes OpenThread made since the last call to the radio.
     async fn apply_radio_security<R>(&self, mut radio: R)
     where
         R: Radio,
     {
-        let (keys, frame_counter, csl) = {
+        let (keys, frame_counter, csl, probing) = {
             let mut ot = self.activate();
             let state = ot.state();
 
@@ -1549,8 +1549,16 @@ impl<'a> OpenThread<'a> {
                 state.ot.radio_mac_keys.take(),
                 state.ot.radio_frame_counter.take(),
                 state.ot.radio_csl_changed.take(),
+                core::mem::take(&mut state.ot.radio_enh_ack_probing_changed)
+                    .then(|| state.ot.radio_enh_ack_probing.clone()),
             )
         };
+
+        if let Some(probing) = probing {
+            trace!("Radio enhanced-ACK probing changed: {:?}", probing);
+
+            unwrap_dbg!(radio.set_enh_ack_probing(&probing).await);
+        }
 
         if let Some(csl) = csl {
             trace!("Radio CSL changed: {:?}", csl);
@@ -2152,6 +2160,10 @@ impl OtResources {
                 sample_time: 0,
             },
             radio_csl_changed: None,
+            radio_enh_ack_probing: radio::EnhAckProbingConfig {
+                initiators: heapless::Vec::new(),
+            },
+            radio_enh_ack_probing_changed: false,
             radio_clock: radio::embassy_radio_clock,
             radio_csl_accuracy: radio::RadioCaps::UNKNOWN_CSL_TIMING,
             radio_csl_uncertainty: radio::RadioCaps::UNKNOWN_CSL_TIMING,
@@ -3298,6 +3310,36 @@ impl<'a> OtContext<'a> {
         state.ot.radio_conf_changed.signal(());
     }
 
+    fn plat_radio_configure_enh_ack_probing(
+        &mut self,
+        short_address: u16,
+        ext_address: [u8; 8],
+        metrics: radio::LinkMetrics,
+    ) -> Result<(), OtError> {
+        trace!(
+            "Plat radio configure enh-ACK probing callback, short: {:04x}, metrics: {:?}",
+            short_address,
+            metrics
+        );
+
+        let state = self.state();
+
+        state
+            .ot
+            .radio_enh_ack_probing
+            .configure(short_address, ext_address, metrics)
+            .map_err(|error| {
+                OtError::new(match error {
+                    radio::EnhAckProbingError::NotFound => otError_OT_ERROR_NOT_FOUND,
+                    radio::EnhAckProbingError::NoBufs => otError_OT_ERROR_NO_BUFS,
+                })
+            })?;
+        state.ot.radio_enh_ack_probing_changed = true;
+        state.ot.radio_conf_changed.signal(());
+
+        Ok(())
+    }
+
     fn plat_radio_set_mac_frame_counter(&mut self, update: radio::FrameCounterUpdate) {
         trace!(
             "Plat radio set MAC frame counter callback, update: {:?}",
@@ -3623,6 +3665,11 @@ struct OtState<'a> {
     /// [`radio_csl`](Self::radio_csl) when it changed since the radio last
     /// took it.
     radio_csl_changed: Option<radio::CslConfig>,
+    /// The enhanced-ACK probing initiators OpenThread configured.
+    radio_enh_ack_probing: radio::EnhAckProbingConfig,
+    /// Whether [`radio_enh_ack_probing`](Self::radio_enh_ack_probing)
+    /// changed since the radio last took it.
+    radio_enh_ack_probing_changed: bool,
     /// The radio clock (`otPlatRadioGetNow`).
     radio_clock: radio::RadioClock,
     /// `otPlatRadioGetCslAccuracy`, from the radio's capabilities.

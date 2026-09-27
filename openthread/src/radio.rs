@@ -389,6 +389,103 @@ impl defmt::Format for MacKeys {
     }
 }
 
+/// The Thread Link Metrics a probing initiator asked this device, as Link
+/// Metrics subject, to report (`otLinkMetrics`).
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct LinkMetrics {
+    /// The count of frames received (`mPduCount`).
+    pub pdu_count: bool,
+    /// The link quality (`mLqi`).
+    pub lqi: bool,
+    /// The link margin (`mLinkMargin`).
+    pub link_margin: bool,
+    /// The RSSI (`mRssi`).
+    pub rssi: bool,
+}
+
+impl LinkMetrics {
+    /// Whether no metric is set, which removes an initiator.
+    pub const fn is_empty(&self) -> bool {
+        !self.pdu_count && !self.lqi && !self.link_margin && !self.rssi
+    }
+}
+
+/// One neighbor that probes this device with enhanced ACKs.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct EnhAckProbingInitiator {
+    /// The neighbor's short address.
+    pub short_address: u16,
+    /// The neighbor's extended address as `otExtAddress` holds it, most
+    /// significant byte first: the reverse of its byte order in a frame.
+    pub ext_address: [u8; 8],
+    /// The metrics each enhanced ACK to the neighbor reports.
+    pub metrics: LinkMetrics,
+}
+
+/// Capacity of the [`EnhAckProbingConfig`] table, which the build also sets
+/// as OpenThread's `OPENTHREAD_CONFIG_MLE_LINK_METRICS_MAX_SERIES_SUPPORTED`
+/// (by default `OPENTHREAD_CONFIG_MLE_MAX_CHILDREN`, ten).
+pub const ENH_ACK_PROBING_CAPACITY: usize = 10;
+
+/// The enhanced-ACK probing initiators OpenThread configured
+/// (`otPlatRadioConfigureEnhAckProbing`), most recently added first, as the
+/// `link_metrics.cpp` platform utility keeps them. A radio that generates
+/// enhanced ACKs adds the Thread enhanced-ACK probing IE with the
+/// configured metrics to its ACKs to each initiator.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct EnhAckProbingConfig {
+    /// The initiators, most recently added first.
+    pub initiators: heapless::Vec<EnhAckProbingInitiator, ENH_ACK_PROBING_CAPACITY>,
+}
+
+/// Why an enhanced-ACK probing configuration changed nothing.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum EnhAckProbingError {
+    /// Removing an initiator the table does not hold (`OT_ERROR_NOT_FOUND`).
+    NotFound,
+    /// The table has no room for another initiator (`OT_ERROR_NO_BUFS`).
+    NoBufs,
+}
+
+impl EnhAckProbingConfig {
+    /// `otLinkMetricsConfigureEnhAckProbing`: probe the initiator with
+    /// `short_address` for `metrics`, replacing its earlier metrics; empty
+    /// metrics remove it.
+    pub fn configure(
+        &mut self,
+        short_address: u16,
+        ext_address: [u8; 8],
+        metrics: LinkMetrics,
+    ) -> Result<(), EnhAckProbingError> {
+        let position = self
+            .initiators
+            .iter()
+            .position(|initiator| initiator.short_address == short_address);
+        if metrics.is_empty() {
+            let position = position.ok_or(EnhAckProbingError::NotFound)?;
+            self.initiators.remove(position);
+            return Ok(());
+        }
+        let initiator = EnhAckProbingInitiator {
+            short_address,
+            ext_address,
+            metrics,
+        };
+        match position {
+            Some(position) => self.initiators[position] = initiator,
+            None => self
+                .initiators
+                .insert(0, initiator)
+                .map_err(|_| EnhAckProbingError::NoBufs)?,
+        }
+        Ok(())
+    }
+}
+
 /// A change of the MAC frame counter of a radio that reports
 /// [`Capabilities::TRANSMIT_SEC`].
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
@@ -766,6 +863,18 @@ pub trait Radio {
         Ok(())
     }
 
+    /// Replace the enhanced-ACK probing initiators of a Link Metrics
+    /// subject (`otPlatRadioConfigureEnhAckProbing`), before the next
+    /// operation that follows the change. The default ignores them.
+    async fn set_enh_ack_probing(
+        &mut self,
+        config: &EnhAckProbingConfig,
+    ) -> Result<(), Self::Error> {
+        let _ = config;
+
+        Ok(())
+    }
+
     /// Change the MAC frame counter the radio secures frames and enhanced
     /// ACKs with (`otPlatRadioSetMacFrameCounter`,
     /// `otPlatRadioSetMacFrameCounterIfLarger`).
@@ -873,6 +982,13 @@ where
 
     async fn set_mac_keys(&mut self, keys: &MacKeys) -> Result<(), Self::Error> {
         T::set_mac_keys(self, keys).await
+    }
+
+    async fn set_enh_ack_probing(
+        &mut self,
+        config: &EnhAckProbingConfig,
+    ) -> Result<(), Self::Error> {
+        T::set_enh_ack_probing(self, config).await
     }
 
     async fn set_mac_frame_counter(

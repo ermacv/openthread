@@ -269,6 +269,13 @@ impl OpenThreadBuilder {
         // The `csl` feature opts into both CSL sides and the microsecond
         // platform timer the receiver requires; the radio then has to
         // implement the CSL surface of the `Radio` trait.
+        // A Link Metrics subject keeps as many enhanced-ACK probing series as
+        // the radio table `openthread::radio::ENH_ACK_PROBING_CAPACITY` holds.
+        if std::env::var_os("CARGO_FEATURE_LINK_METRICS_SUBJECT").is_some() {
+            let series = "-DOPENTHREAD_CONFIG_MLE_LINK_METRICS_MAX_SERIES_SUPPORTED=10";
+            config.cflag(series).cxxflag(series);
+        }
+
         let csl = features::csl_active();
         let csl_define = |name: &str| format!("-DOPENTHREAD_CONFIG_{name}={}", u8::from(csl));
         config

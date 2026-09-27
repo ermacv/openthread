@@ -182,6 +182,24 @@ radio that reports `OT_RADIO_CAPS_TRANSMIT_TIMING`. The CSL accuracy and
 uncertainty are part of `RadioCaps`. `MacRadio` and `ProxyRadio` clear both
 timing capabilities.
 
+### C11. Enhanced-ACK probing puts the initiators' Link Metrics into the radio's ACKs
+
+With the `link-metrics-subject` feature OpenThread builds the Link Metrics
+subject, which lets a neighbor ask for Link Metrics in every enhanced ACK
+it receives (enhanced-ACK based probing). The subject configures each such
+initiator through `otPlatRadioConfigureEnhAckProbing` and expects the
+answer at once, so the crate keeps the initiator table itself, with the
+semantics of OpenThread's `link_metrics.cpp` platform utility: at most
+`ENH_ACK_PROBING_CAPACITY` initiators (also the build's
+`OPENTHREAD_CONFIG_MLE_LINK_METRICS_MAX_SERIES_SUPPORTED`), most recently
+added first, `OT_ERROR_NOT_FOUND` for clearing an absent one and
+`OT_ERROR_NO_BUFS` for a full table. The table reaches the radio before its
+next operation (`Radio::set_enh_ack_probing`); a radio that generates
+enhanced ACKs adds the Thread enhanced-ACK probing IE with the configured
+metrics of the frame's source. The default ignores the table, so the
+radio's ACKs carry no Link Metrics; `MacRadio` and `ProxyRadio` do not
+forward it.
+
 ## The radio state machine
 
 ```

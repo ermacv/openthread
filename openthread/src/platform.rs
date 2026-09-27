@@ -9,8 +9,9 @@ use embassy_sync::blocking_mutex::Mutex;
 use openthread_sys::otError_OT_ERROR_NONE;
 
 use crate::sys::{
-    otError, otExtAddress, otInstance, otLogLevel, otLogRegion, otMacKeyMaterial, otRadioCaps,
-    otRadioFrame, otRadioKeyType, otRadioKeyType_OT_KEY_TYPE_LITERAL_KEY,
+    otError, otError_OT_ERROR_INVALID_ARGS, otExtAddress, otInstance, otLinkMetrics, otLogLevel,
+    otLogRegion, otMacKeyMaterial, otRadioCaps, otRadioFrame, otRadioKeyType,
+    otRadioKeyType_OT_KEY_TYPE_LITERAL_KEY, otShortAddress,
 };
 use crate::{IntoOtCode, OtActiveState, OtContext};
 
@@ -270,6 +271,30 @@ extern "C" fn otPlatRadioSetMacFrameCounterIfLarger(instance: *mut otInstance, f
     OtContext::callback(instance).plat_radio_set_mac_frame_counter(
         crate::radio::FrameCounterUpdate::SetIfLarger(frame_counter),
     );
+}
+
+// --- Link Metrics subject (builds with `link-metrics-subject`) ---
+
+#[no_mangle]
+extern "C" fn otPlatRadioConfigureEnhAckProbing(
+    instance: *mut otInstance,
+    link_metrics: otLinkMetrics,
+    short_address: otShortAddress,
+    ext_address: *const otExtAddress,
+) -> otError {
+    let Some(ext_address) = (unsafe { ext_address.as_ref() }) else {
+        return otError_OT_ERROR_INVALID_ARGS;
+    };
+    let metrics = crate::radio::LinkMetrics {
+        pdu_count: link_metrics.mPduCount(),
+        lqi: link_metrics.mLqi(),
+        link_margin: link_metrics.mLinkMargin(),
+        rssi: link_metrics.mRssi(),
+    };
+
+    OtContext::callback(instance)
+        .plat_radio_configure_enh_ack_probing(short_address, ext_address.m8, metrics)
+        .into_ot_code()
 }
 
 // --- Timing and CSL (radios reporting `OT_RADIO_CAPS_RECEIVE_TIMING` /
