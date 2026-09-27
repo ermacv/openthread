@@ -332,6 +332,7 @@ impl Radio for SimRadio {
                 // match on exactly that.
                 lqi: Some(0),
                 ack: None,
+                timestamp: None,
             });
         }
     }

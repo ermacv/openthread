@@ -570,6 +570,8 @@ pub struct SpinelRadio<'a, T> {
     /// The RCP's own defaults for the transmit power and the CCA threshold,
     /// read once during the handshake and reported through [`RadioCaps`].
     default_cca_threshold: i8,
+    csl_accuracy: RadioCaps::UNKNOWN_CSL_TIMING,
+    csl_uncertainty: RadioCaps::UNKNOWN_CSL_TIMING,
     /// The receive sensitivity read from the RCP's `PHY_RX_SENSITIVITY`
     /// during the handshake; the crate-wide default until then (and for RCP
     /// firmwares that do not implement the property).
@@ -628,6 +630,8 @@ where
             cca_threshold: RadioCaps::DEFAULT_CCA_THRESHOLD,
             default_tx_power: RadioCaps::DEFAULT_TX_POWER,
             default_cca_threshold: RadioCaps::DEFAULT_CCA_THRESHOLD,
+            csl_accuracy: RadioCaps::UNKNOWN_CSL_TIMING,
+            csl_uncertainty: RadioCaps::UNKNOWN_CSL_TIMING,
             sensitivity: RadioCaps::DEFAULT_RECEIVE_SENSITIVITY,
             src_match_dirty: false,
             rx_enabled: false,
@@ -1468,6 +1472,8 @@ where
             receive_sensitivity: self.sensitivity,
             default_tx_power: self.default_tx_power,
             default_cca_threshold: self.default_cca_threshold,
+            csl_accuracy: RadioCaps::UNKNOWN_CSL_TIMING,
+            csl_uncertainty: RadioCaps::UNKNOWN_CSL_TIMING,
         })
     }
 
@@ -1692,6 +1698,7 @@ where
                     rssi: ack_rssi,
                     lqi: ack_lqi,
                     ack: None,
+                    timestamp: None,
                 }))
             }
             // The caller didn't ask for the ACK PSDU (didn't expect an ACK), so
@@ -1727,6 +1734,7 @@ where
                     rssi,
                     lqi,
                     ack: None,
+                    timestamp: None,
                 });
             }
             // Unparseable stashed frame — skip and try the next.
@@ -1755,6 +1763,7 @@ where
                     rssi,
                     lqi,
                     ack: None,
+                    timestamp: None,
                 });
             }
             // Other frames (matched responses to a concurrent op, status) — ignore.

@@ -265,11 +265,19 @@ impl OpenThreadBuilder {
         // so every existing `Radio` driver keeps working unchanged. Enabling CSL
         // (low-power SSED) is a deliberate future opt-in that also needs the
         // `Radio` trait to grow the CSL/enh-ACK-security surface.
+        //
+        // The `csl` feature opts into both CSL sides and the microsecond
+        // platform timer the receiver requires; the radio then has to
+        // implement the CSL surface of the `Radio` trait.
+        let csl = features::csl_active();
+        let csl_define = |name: &str| format!("-DOPENTHREAD_CONFIG_{name}={}", u8::from(csl));
         config
             .define("OT_THREAD_VERSION", "1.4")
-            .cflag("-DOPENTHREAD_CONFIG_MAC_CSL_TRANSMITTER_ENABLE=0")
-            .cxxflag("-DOPENTHREAD_CONFIG_MAC_CSL_TRANSMITTER_ENABLE=0")
-            .define("OT_CSL_RECEIVER", "OFF")
+            .cflag(csl_define("MAC_CSL_TRANSMITTER_ENABLE"))
+            .cxxflag(csl_define("MAC_CSL_TRANSMITTER_ENABLE"))
+            .cflag(csl_define("PLATFORM_USEC_TIMER_ENABLE"))
+            .cxxflag(csl_define("PLATFORM_USEC_TIMER_ENABLE"))
+            .define("OT_CSL_RECEIVER", if csl { "ON" } else { "OFF" })
             .define("OT_LOG_LEVEL", "NOTE")
             // Build BOTH device types so the prebuilt cache covers MTD and FTD.
             // The actual archives shipped/linked are chosen by the umbrella

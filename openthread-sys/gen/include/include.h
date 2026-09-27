@@ -90,6 +90,7 @@
 
 // Platform callbacks implemented by this crate
 #include "openthread/platform/alarm-milli.h"
+#include "openthread/platform/alarm-micro.h"
 #include "openthread/platform/radio.h"
 #include "openthread/platform/misc.h"
 #include "openthread/platform/entropy.h"

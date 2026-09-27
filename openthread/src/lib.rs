@@ -880,6 +880,21 @@ impl<'a> OpenThread<'a> {
         ot!(unsafe { otThreadSetLinkMode(state.ot.instance, mode) })
     }
 
+    /// Set the CSL period of a synchronized sleepy end device, in
+    /// microseconds (`otLinkSetCslPeriod`); zero stops CSL.
+    ///
+    /// The device samples the channel once per period in receive windows
+    /// its radio schedules (`Radio::receive_at`) instead of polling its
+    /// parent; it must run with `rx_on_when_idle = false` (see
+    /// [`Self::set_link_mode`]).
+    #[cfg(feature = "csl")]
+    pub fn set_csl_period(&self, period_micros: u32) -> Result<(), OtError> {
+        let mut ot = self.activate();
+        let state = ot.state();
+
+        ot!(unsafe { sys::otLinkSetCslPeriod(state.ot.instance, period_micros) })
+    }
+
     /// Return the *effective* data-poll period of a Sleepy End Device, in
     /// milliseconds (`otLinkGetPollPeriod`).
     ///
@@ -1127,6 +1142,15 @@ impl<'a> OpenThread<'a> {
         let mut alarm = pin!(self.run_alarm());
         let mut openthread = pin!(self.run_tasklets());
 
+        // The CSL receiver schedules its windows with the microsecond alarm.
+        #[cfg(feature = "csl")]
+        let mut openthread = pin!(async {
+            let mut alarm_micro = pin!(self.run_alarm_micro());
+            match select(&mut openthread, &mut alarm_micro).await {
+                Either::First(r) | Either::Second(r) => r,
+            }
+        });
+
         let result = select3(&mut radio, &mut alarm, &mut openthread).await;
 
         match result {
@@ -1294,6 +1318,36 @@ impl<'a> OpenThread<'a> {
         }
     }
 
+    /// An async loop that waits until the latest microsecond alarm (if any)
+    /// expires and then notifies the OpenThread C library
+    /// (`otPlatAlarmMicroFired`).
+    #[cfg(feature = "csl")]
+    async fn run_alarm_micro(&self) -> ! {
+        let alarm = || poll_fn(move |cx| self.activate().state().ot.alarm_micro.poll_wait(cx));
+
+        loop {
+            let Some(mut when) = alarm().await else {
+                continue;
+            };
+
+            loop {
+                match select(alarm(), embassy_time::Timer::at(when)).await {
+                    Either::First(Some(new_when)) => when = new_when,
+                    Either::First(None) => break,
+                    Either::Second(_) => {
+                        let mut ot = self.activate();
+
+                        unsafe { sys::otPlatAlarmMicroFired(ot.state().ot.instance) };
+
+                        ot.process_tasklets();
+
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
     /// An async loop that sends or receives IEEE 802.15.4 frames, based on commands issued by the OT loop
     ///
     /// Needs to be a separate async loop, because OpenThread C is unaware of async/await and futures,
@@ -1366,6 +1420,9 @@ impl<'a> OpenThread<'a> {
             }
 
             state.ot.radio_caps = caps.phy.bits();
+            state.ot.radio_clock = radio.clock();
+            state.ot.radio_csl_accuracy = caps.csl_accuracy;
+            state.ot.radio_csl_uncertainty = caps.csl_uncertainty;
             state.ot.radio_sensitivity = caps.receive_sensitivity;
             state.ot.radio_cca_threshold = caps.default_cca_threshold;
             state.ot.radio_tx_power = caps.default_tx_power;
@@ -1386,7 +1443,7 @@ impl<'a> OpenThread<'a> {
 
             let action = if let Some(rx_channel) = rx_channel {
                 let mut action = pin!(self.radio_action());
-                let mut rx = pin!(self.run_radio_rx(&mut radio, rx_channel, &mut psdu_buf));
+                let mut rx = pin!(self.run_radio_rx(&mut radio, Some(rx_channel), &mut psdu_buf));
 
                 let Either::First(action) = select(&mut action, &mut rx).await;
 
@@ -1433,6 +1490,21 @@ impl<'a> OpenThread<'a> {
                         // Nothing to do: an interrupt has already done its
                         // whole job by waking the runner.
                         RadioCommand::Interrupt => (),
+                        RadioCommand::ReceiveAt {
+                            channel,
+                            start,
+                            duration,
+                        } => {
+                            self.apply_radio_security(&mut radio).await;
+
+                            // The radio sleeps until the window and after it;
+                            // frames of the window flow up until the next command.
+                            unwrap_dbg!(radio.receive_at(channel, start, duration).await);
+
+                            let mut rx = pin!(self.run_radio_rx(&mut radio, None, &mut psdu_buf));
+
+                            select(&mut new_cmd, &mut rx).await;
+                        }
                         RadioCommand::Tx => {
                             // Keys and counter changes precede the frame that needs them.
                             self.apply_radio_security(&mut radio).await;
@@ -1463,21 +1535,28 @@ impl<'a> OpenThread<'a> {
         }
     }
 
-    /// Hand the MAC keys and frame counter changes OpenThread made since the
-    /// last call to the radio.
+    /// Hand the MAC keys, frame counter and CSL changes OpenThread made since
+    /// the last call to the radio.
     async fn apply_radio_security<R>(&self, mut radio: R)
     where
         R: Radio,
     {
-        let (keys, frame_counter) = {
+        let (keys, frame_counter, csl) = {
             let mut ot = self.activate();
             let state = ot.state();
 
             (
                 state.ot.radio_mac_keys.take(),
                 state.ot.radio_frame_counter.take(),
+                state.ot.radio_csl_changed.take(),
             )
         };
+
+        if let Some(csl) = csl {
+            trace!("Radio CSL changed: {:?}", csl);
+
+            unwrap_dbg!(radio.set_csl(csl).await);
+        }
 
         if let Some(keys) = keys {
             trace!("Radio MAC keys changed: {:?}", keys);
@@ -1495,11 +1574,16 @@ impl<'a> OpenThread<'a> {
     /// Repeatedly receive IEEE 802.15.4 frames from the radio and pass them to the OpenThread C library.
     ///
     /// This loop runs forever, unless cancelled by dropping the future.
-    async fn run_radio_rx<R>(&self, mut radio: R, channel: u8, psdu_buf: &mut [u8]) -> !
+    ///
+    /// With a `channel`, the radio is first set to receive on it; without
+    /// one, it already received a scheduled window.
+    async fn run_radio_rx<R>(&self, mut radio: R, channel: Option<u8>, psdu_buf: &mut [u8]) -> !
     where
         R: Radio,
     {
-        unwrap_dbg!(radio.set_receive(channel).await);
+        if let Some(channel) = channel {
+            unwrap_dbg!(radio.set_receive(channel).await);
+        }
 
         loop {
             self.activate().process_tasklets();
@@ -1573,7 +1657,7 @@ impl<'a> OpenThread<'a> {
     where
         R: Radio,
     {
-        let (cca_threshold, channel, power, psdu_len, retransmission, security_processed) = {
+        let (cca_threshold, channel, power, psdu_len, retransmission, security_processed, tx_at) = {
             let mut ot = self.activate();
             let state = ot.state();
 
@@ -1595,6 +1679,8 @@ impl<'a> OpenThread<'a> {
                 psdu_len,
                 tx_info.mIsARetx(),
                 tx_info.mIsSecurityProcessed(),
+                (tx_info.mTxDelay != 0)
+                    .then(|| tx_info.mTxDelayBaseTime.wrapping_add(tx_info.mTxDelay)),
             )
         };
 
@@ -1618,6 +1704,7 @@ impl<'a> OpenThread<'a> {
             retransmission,
             security_processed,
             header_updated: false,
+            tx_at,
         };
 
         let result = radio.transmit_frame(&mut frame, Some(ack_psdu_buf)).await;
@@ -1882,7 +1969,10 @@ impl<'a> OpenThread<'a> {
         frame.mChannel = psdu_meta.channel;
         frame.mInfo.mRxInfo.mRssi = rssi;
         frame.mInfo.mRxInfo.mLqi = psdu_meta.lqi.unwrap_or_else(|| rssi_to_lqi(rssi));
-        frame.mInfo.mRxInfo.mTimestamp = Instant::now().as_micros(); // TODO: Not precise
+        // CSL synchronizes on the SFD time the radio reports.
+        frame.mInfo.mRxInfo.mTimestamp = psdu_meta
+            .timestamp
+            .unwrap_or_else(|| Instant::now().as_micros());
 
         // The flag is what makes the stack serve a sleepy child's data
         // poll from its indirect queue - without it the child is presumed
@@ -2057,6 +2147,16 @@ impl OtResources {
             radio_conf_src_match_changed: Signal::new(),
             radio_mac_keys: None,
             radio_frame_counter: None,
+            radio_csl: radio::CslConfig {
+                period: 0,
+                sample_time: 0,
+            },
+            radio_csl_changed: None,
+            radio_clock: radio::embassy_radio_clock,
+            radio_csl_accuracy: radio::RadioCaps::UNKNOWN_CSL_TIMING,
+            radio_csl_uncertainty: radio::RadioCaps::UNKNOWN_CSL_TIMING,
+            #[cfg(feature = "csl")]
+            alarm_micro: Signal::new(),
             radio_cmd: Signal::new(),
             radio_enabled: false,
             radio_receive_channel: None,
@@ -3119,6 +3219,76 @@ impl<'a> OtContext<'a> {
         }
     }
 
+    fn plat_radio_now(&mut self) -> u64 {
+        (self.state().ot.radio_clock)()
+    }
+
+    fn plat_radio_csl_timing(&mut self) -> (u8, u8) {
+        let state = self.state();
+
+        (state.ot.radio_csl_accuracy, state.ot.radio_csl_uncertainty)
+    }
+
+    fn plat_radio_update_csl(&mut self, update: impl FnOnce(&mut radio::CslConfig)) {
+        let state = self.state();
+
+        update(&mut state.ot.radio_csl);
+        state.ot.radio_csl_changed = Some(state.ot.radio_csl);
+        state.ot.radio_conf_changed.signal(());
+    }
+
+    fn plat_radio_receive_at(
+        &mut self,
+        channel: u8,
+        start: u32,
+        duration: u32,
+    ) -> Result<(), OtError> {
+        trace!(
+            "Plat radio RX at cmd: ch{} {} +{}",
+            channel,
+            start,
+            duration
+        );
+
+        let state = self.state();
+
+        if !state.ot.radio_enabled {
+            Err(OtError::new(otError_OT_ERROR_INVALID_STATE))?;
+        }
+
+        // The window is a command; outside it the radio sleeps.
+        state.ot.radio_receive_channel = None;
+        state.ot.radio_cmd.signal(RadioCommand::ReceiveAt {
+            channel,
+            start,
+            duration,
+        });
+
+        Ok(())
+    }
+
+    #[cfg(feature = "csl")]
+    fn plat_alarm_micro_set(&mut self, at0_us: u32, adt_us: u32) {
+        // As the millisecond alarm, in wrapping 32-bit microseconds.
+        let now_64 = Instant::now().as_micros();
+        let offset = at0_us.wrapping_add(adt_us).wrapping_sub(now_64 as u32);
+        let when = if offset < 0x8000_0000 {
+            now_64 + u64::from(offset)
+        } else {
+            now_64
+        };
+
+        self.state()
+            .ot
+            .alarm_micro
+            .signal(Some(embassy_time::Instant::from_micros(when)));
+    }
+
+    #[cfg(feature = "csl")]
+    fn plat_alarm_micro_clear(&mut self) {
+        self.state().ot.alarm_micro.signal(None);
+    }
+
     fn plat_radio_set_mac_keys(&mut self, keys: radio::MacKeys) {
         trace!("Plat radio set MAC keys callback, keys: {:?}", keys);
 
@@ -3448,6 +3618,20 @@ struct OtState<'a> {
     /// A MAC frame counter change (`otPlatRadioSetMacFrameCounter*`) not yet
     /// handed to the radio.
     radio_frame_counter: Option<radio::FrameCounterUpdate>,
+    /// The CSL receiver state OpenThread set.
+    radio_csl: radio::CslConfig,
+    /// [`radio_csl`](Self::radio_csl) when it changed since the radio last
+    /// took it.
+    radio_csl_changed: Option<radio::CslConfig>,
+    /// The radio clock (`otPlatRadioGetNow`).
+    radio_clock: radio::RadioClock,
+    /// `otPlatRadioGetCslAccuracy`, from the radio's capabilities.
+    radio_csl_accuracy: u8,
+    /// `otPlatRadioGetCslUncertainty`, from the radio's capabilities.
+    radio_csl_uncertainty: u8,
+    /// The pending microsecond alarm, `None` to cancel it.
+    #[cfg(feature = "csl")]
+    alarm_micro: Signal<Option<embassy_time::Instant>>,
     /// Raised whenever the radio needs to execute the provided command.
     radio_cmd: Signal<RadioCommand>,
     /// Whether the radio is enabled (`otPlatRadioEnable`/`Disable`).
@@ -3494,6 +3678,12 @@ enum RadioCommand {
     /// Once the scan completes (or an error occurs) OpenThread C will be
     /// signalled by calling `otPlatRadioEnergyScanDone`.
     EnergyScan { channel: u8, duration_millis: u16 },
+    /// Receive in a window at a radio time (`otPlatRadioReceiveAt`).
+    ReceiveAt {
+        channel: u8,
+        start: u32,
+        duration: u32,
+    },
 }
 
 /// Radio-related OpenThread C data carriers

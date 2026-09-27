@@ -172,6 +172,8 @@ impl Radio for EspRadio<'_> {
             receive_sensitivity: RadioCaps::DEFAULT_RECEIVE_SENSITIVITY,
             default_tx_power: Self::DEFAULT_TX_POWER,
             default_cca_threshold: Self::DEFAULT_CCA_THRESHOLD,
+            csl_accuracy: RadioCaps::UNKNOWN_CSL_TIMING,
+            csl_uncertainty: RadioCaps::UNKNOWN_CSL_TIMING,
         })
     }
 
@@ -266,6 +268,7 @@ impl Radio for EspRadio<'_> {
                                 rssi,
                                 lqi: None,
                                 ack: None,
+                                timestamp: None,
                             }));
                         } else {
                             trace!(
@@ -340,6 +343,7 @@ impl Radio for EspRadio<'_> {
             rssi,
             lqi: None,
             ack: None,
+            timestamp: None,
         })
     }
 }

@@ -186,10 +186,14 @@ impl Radio for ProxyRadio<'_> {
         // Put it back, so that a second `init` answers instead of hanging.
         self.caps.signal(caps);
 
-        // Transmit security is not forwarded through the proxy, so
-        // OpenThread keeps securing frames itself.
+        // Transmit security and timed operations are not forwarded through
+        // the proxy, so OpenThread keeps them itself.
         let mut caps = caps;
-        caps.phy.remove(crate::Capabilities::TRANSMIT_SEC);
+        caps.phy.remove(
+            crate::Capabilities::TRANSMIT_SEC
+                | crate::Capabilities::TRANSMIT_TIMING
+                | crate::Capabilities::RECEIVE_TIMING,
+        );
 
         Ok(caps)
     }
@@ -252,6 +256,7 @@ impl Radio for ProxyRadio<'_> {
             rssi: response.psdu_rssi,
             lqi: response.psdu_lqi,
             ack: None,
+            timestamp: None,
         });
 
         if let Some(ack_psdu_buf) = ack_psdu_buf {
@@ -714,6 +719,7 @@ impl ProxyRadioFrame {
                 rssi: None,
                 lqi: None,
                 ack: None,
+                timestamp: None,
             }),
             psdu: [0; PSDU_LEN],
         }

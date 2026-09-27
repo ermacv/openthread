@@ -37,6 +37,10 @@ srp = ["srp-client"] # For backwards compatibility
 
 # SRP client: gates the Rust SRP API and compiles in OpenThread's SRP client.
 srp-client = ["openthread-sys/srp-client"]
+# Coordinated Sampled Listening (Thread 1.2): the CSL receiver and
+# transmitter, the microsecond platform alarm and the CSL radio API
+# (`Radio::receive_at`, `Radio::set_csl`, delayed transmission).
+csl = ["openthread-sys/csl"]
 # Device-type / radio-location selection (additive; absence = the default).
 #   ftd off -> MTD end-device (default);  ftd on -> FTD (router-capable)
 #   rcp     -> the 802.15.4 radio is a separate RCP chip reached over a UART/SPI

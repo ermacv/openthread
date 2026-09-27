@@ -432,6 +432,7 @@ impl Radio for VtRadio {
                 // As in `SimRadio`: the C simulation platform's LQI.
                 lqi: Some(0),
                 ack: None,
+                timestamp: None,
             });
         }
     }

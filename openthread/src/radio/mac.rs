@@ -376,10 +376,14 @@ where
 
         self.power = caps.default_tx_power;
 
-        // Transmit security is not forwarded through the software MAC, so
-        // OpenThread keeps securing frames itself.
+        // Transmit security and timed operations are not forwarded through
+        // the software MAC, so OpenThread keeps them itself.
         let mut phy = caps.phy;
-        phy.remove(crate::Capabilities::TRANSMIT_SEC);
+        phy.remove(
+            crate::Capabilities::TRANSMIT_SEC
+                | crate::Capabilities::TRANSMIT_TIMING
+                | crate::Capabilities::RECEIVE_TIMING,
+        );
 
         Ok(RadioCaps { phy, mac, ..caps })
     }
@@ -661,6 +665,7 @@ impl PendingRxFrame {
                 rssi: None,
                 lqi: None,
                 ack: None,
+                timestamp: None,
             },
             psdu: [0; OT_RADIO_FRAME_MAX_SIZE as _],
         }

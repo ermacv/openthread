@@ -50,6 +50,13 @@ default = ["matter"]
 # feature so OpenThread reuses it instead of building its own.
 mbedtls-rs-sys = ["dep:mbedtls-rs-sys"]
 
+# Coordinated Sampled Listening: the CSL receiver (a sleepy end device
+# sampling scheduled receive windows), the CSL transmitter (a parent sending
+# to such children at their sample times) and the microsecond platform timer
+# the receiver needs. The platform must then provide `otPlatAlarmMicro*` and
+# the CSL radio API. Forces an on-the-fly OpenThread build.
+csl = []
+
 # ---------------------------------------------------------------------------
 # Heap configuration (`gen/features.rs::HeapConfig`, `gen/builder.rs`).
 #

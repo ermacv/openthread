@@ -206,6 +206,12 @@ pub struct RadioCaps {
     pub default_tx_power: i8,
     /// The radio's default CCA threshold, in dBm.
     pub default_cca_threshold: i8,
+    /// The drift of the clock the radio schedules CSL operations with, in
+    /// ± ppm (`otPlatRadioGetCslAccuracy`).
+    pub csl_accuracy: u8,
+    /// The fixed uncertainty of the radio's CSL scheduling, in units of 10
+    /// microseconds (`otPlatRadioGetCslUncertainty`).
+    pub csl_uncertainty: u8,
 }
 
 impl RadioCaps {
@@ -218,6 +224,10 @@ impl RadioCaps {
 
     /// A default transmit power used when constructing default `RadioCaps`.
     pub const DEFAULT_TX_POWER: i8 = 12;
+
+    /// OpenThread's own answer for a radio that does not report its CSL
+    /// accuracy or uncertainty: the worst value.
+    pub const UNKNOWN_CSL_TIMING: u8 = u8::MAX;
 }
 
 impl Default for RadioCaps {
@@ -228,6 +238,8 @@ impl Default for RadioCaps {
             receive_sensitivity: Self::DEFAULT_RECEIVE_SENSITIVITY,
             default_tx_power: Self::DEFAULT_TX_POWER,
             default_cca_threshold: Self::DEFAULT_CCA_THRESHOLD,
+            csl_accuracy: Self::UNKNOWN_CSL_TIMING,
+            csl_uncertainty: Self::UNKNOWN_CSL_TIMING,
         }
     }
 }
@@ -442,6 +454,38 @@ pub struct TxFrame<'a> {
     /// Set by the radio when it wrote security header fields into
     /// [`psdu`](Self::psdu), including when the transmission then failed.
     pub header_updated: bool,
+    /// The time the frame starts on the air, in the low 32 bits of the radio
+    /// clock (`mTxDelayBaseTime + mTxDelay`), for a radio that reports
+    /// [`Capabilities::TRANSMIT_TIMING`]; `None` transmits at once.
+    pub tx_at: Option<u32>,
+}
+
+/// The clock of a radio's receive timestamps and scheduled operations, in
+/// microseconds (`otPlatRadioGetNow`).
+pub type RadioClock = fn() -> u64;
+
+/// The `embassy-time` clock, for radios whose timestamps and schedules count
+/// in it.
+pub fn embassy_radio_clock() -> u64 {
+    embassy_time::Instant::now().as_micros()
+}
+
+/// The Coordinated Sampled Listening state of a CSL receiver
+/// (`otPlatRadioEnableCsl`, `otPlatRadioResetCsl`,
+/// `otPlatRadioUpdateCslSampleTime`).
+///
+/// With a nonzero period, the radio adds a CSL IE to the enhanced ACKs it
+/// generates and fills the CSL IE of every frame it sends - ACKs and frames
+/// OpenThread prepared - with the period and the phase to the next sample
+/// time, when the frame starts on the air.
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct CslConfig {
+    /// The CSL period in units of 10 symbols (160 microseconds); zero
+    /// disables CSL.
+    pub period: u32,
+    /// The next sample time, in the low 32 bits of the radio clock.
+    pub sample_time: u32,
 }
 
 /// The security of an enhanced acknowledgement the radio sent.
@@ -483,6 +527,9 @@ pub struct PsduMeta {
     /// the radio reports one; `None` makes the OpenThread glue derive the
     /// Frame Pending answer from the source-match table.
     pub ack: Option<SentAck>,
+    /// The time the frame's SFD was received, in microseconds of the radio
+    /// clock; `None` stamps the frame when the glue takes it.
+    pub timestamp: Option<u64>,
 }
 
 /// The IEEE 802.15.4 PHY Radio trait.
@@ -674,6 +721,41 @@ pub trait Radio {
     /// - The meta-data associated with the received frame.
     async fn receive(&mut self, psdu_buf: &mut [u8]) -> Result<PsduMeta, Self::Error>;
 
+    /// The clock of the radio's receive timestamps and scheduled operations
+    /// (`otPlatRadioGetNow`), read once after [`init`](Radio::init). The
+    /// default is the `embassy-time` clock.
+    fn clock(&self) -> RadioClock {
+        embassy_radio_clock
+    }
+
+    /// Sleep, then receive on `channel` in the window that opens at `start`
+    /// and lasts `duration` microseconds, then sleep again
+    /// (`otPlatRadioReceiveAt`); `start` counts in the low 32 bits of the
+    /// radio clock. Frames received in the window surface through
+    /// [`receive`](Radio::receive).
+    ///
+    /// Only called for a radio that reports
+    /// [`Capabilities::RECEIVE_TIMING`]. The default receives at once.
+    async fn receive_at(
+        &mut self,
+        channel: u8,
+        start: u32,
+        duration: u32,
+    ) -> Result<(), Self::Error> {
+        let _ = (start, duration);
+
+        self.set_receive(channel).await
+    }
+
+    /// Change the radio's CSL receiver state (`otPlatRadioEnableCsl`,
+    /// `otPlatRadioResetCsl`, `otPlatRadioUpdateCslSampleTime`), before the
+    /// next operation that follows the change. The default ignores it.
+    async fn set_csl(&mut self, csl: CslConfig) -> Result<(), Self::Error> {
+        let _ = csl;
+
+        Ok(())
+    }
+
     /// Set the MAC keys of key identifier mode 1 (`otPlatRadioSetMacKey`).
     ///
     /// Only called for a radio that reports [`Capabilities::TRANSMIT_SEC`],
@@ -770,6 +852,23 @@ where
 
     async fn receive(&mut self, psdu_buf: &mut [u8]) -> Result<PsduMeta, Self::Error> {
         T::receive(self, psdu_buf).await
+    }
+
+    fn clock(&self) -> RadioClock {
+        T::clock(self)
+    }
+
+    async fn receive_at(
+        &mut self,
+        channel: u8,
+        start: u32,
+        duration: u32,
+    ) -> Result<(), Self::Error> {
+        T::receive_at(self, channel, start, duration).await
+    }
+
+    async fn set_csl(&mut self, csl: CslConfig) -> Result<(), Self::Error> {
+        T::set_csl(self, csl).await
     }
 
     async fn set_mac_keys(&mut self, keys: &MacKeys) -> Result<(), Self::Error> {

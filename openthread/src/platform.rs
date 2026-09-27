@@ -9,8 +9,8 @@ use embassy_sync::blocking_mutex::Mutex;
 use openthread_sys::otError_OT_ERROR_NONE;
 
 use crate::sys::{
-    otError, otInstance, otLogLevel, otLogRegion, otMacKeyMaterial, otRadioCaps, otRadioFrame,
-    otRadioKeyType, otRadioKeyType_OT_KEY_TYPE_LITERAL_KEY,
+    otError, otExtAddress, otInstance, otLogLevel, otLogRegion, otMacKeyMaterial, otRadioCaps,
+    otRadioFrame, otRadioKeyType, otRadioKeyType_OT_KEY_TYPE_LITERAL_KEY,
 };
 use crate::{IntoOtCode, OtActiveState, OtContext};
 
@@ -270,6 +270,80 @@ extern "C" fn otPlatRadioSetMacFrameCounterIfLarger(instance: *mut otInstance, f
     OtContext::callback(instance).plat_radio_set_mac_frame_counter(
         crate::radio::FrameCounterUpdate::SetIfLarger(frame_counter),
     );
+}
+
+// --- Timing and CSL (radios reporting `OT_RADIO_CAPS_RECEIVE_TIMING` /
+// `OT_RADIO_CAPS_TRANSMIT_TIMING`, builds with the `csl` feature) ---
+
+#[no_mangle]
+extern "C" fn otPlatRadioGetNow(instance: *mut otInstance) -> u64 {
+    OtContext::callback(instance).plat_radio_now()
+}
+
+#[no_mangle]
+extern "C" fn otPlatRadioReceiveAt(
+    instance: *mut otInstance,
+    channel: u8,
+    start: u32,
+    duration: u32,
+) -> otError {
+    OtContext::callback(instance)
+        .plat_radio_receive_at(channel, start, duration)
+        .into_ot_code()
+}
+
+#[no_mangle]
+extern "C" fn otPlatRadioEnableCsl(
+    instance: *mut otInstance,
+    period: u32,
+    _short_address: u16,
+    _ext_address: *const otExtAddress,
+) -> otError {
+    // As ESP-IDF's OpenThread port, the radio keeps only the period: it
+    // fills the CSL IE of every frame it sends.
+    OtContext::callback(instance).plat_radio_update_csl(|csl| csl.period = period);
+
+    otError_OT_ERROR_NONE
+}
+
+#[no_mangle]
+extern "C" fn otPlatRadioResetCsl(instance: *mut otInstance) -> otError {
+    OtContext::callback(instance).plat_radio_update_csl(|csl| csl.period = 0);
+
+    otError_OT_ERROR_NONE
+}
+
+#[no_mangle]
+extern "C" fn otPlatRadioUpdateCslSampleTime(instance: *mut otInstance, sample_time: u32) {
+    OtContext::callback(instance).plat_radio_update_csl(|csl| csl.sample_time = sample_time);
+}
+
+#[no_mangle]
+extern "C" fn otPlatRadioGetCslAccuracy(instance: *mut otInstance) -> u8 {
+    OtContext::callback(instance).plat_radio_csl_timing().0
+}
+
+#[no_mangle]
+extern "C" fn otPlatRadioGetCslUncertainty(instance: *mut otInstance) -> u8 {
+    OtContext::callback(instance).plat_radio_csl_timing().1
+}
+
+#[cfg(feature = "csl")]
+#[no_mangle]
+extern "C" fn otPlatAlarmMicroGetNow() -> u32 {
+    embassy_time::Instant::now().as_micros() as u32
+}
+
+#[cfg(feature = "csl")]
+#[no_mangle]
+extern "C" fn otPlatAlarmMicroStartAt(instance: *mut otInstance, at0: u32, dt: u32) {
+    OtContext::callback(instance).plat_alarm_micro_set(at0, dt);
+}
+
+#[cfg(feature = "csl")]
+#[no_mangle]
+extern "C" fn otPlatAlarmMicroStop(instance: *mut otInstance) {
+    OtContext::callback(instance).plat_alarm_micro_clear();
 }
 
 // --- Source-address match (FTD only) ---

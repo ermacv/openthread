@@ -162,6 +162,26 @@ before the next transmission and fills the receive information from
 `PsduMeta::ack`. `MacRadio` and `ProxyRadio` do not forward security and
 clear the capability.
 
+### C10. CSL needs the radio's clock, scheduled windows and the CSL IE at the SFD
+
+With the `csl` feature OpenThread builds the CSL receiver and transmitter
+and the microsecond platform alarm (`otPlatAlarmMicro*`) the receiver
+schedules with. A radio that reports `OT_RADIO_CAPS_RECEIVE_TIMING` gets
+one `otPlatRadioReceiveAt` per CSL period and never an explicit sleep: it
+sleeps outside the window by itself (`Radio::receive_at`). OpenThread reads
+the radio clock synchronously (`otPlatRadioGetNow`), so the crate asks the
+radio for it once (`Radio::clock`) and reports receive SFD times from it
+(`PsduMeta::timestamp`), which CSL synchronizes on. The CSL receiver state
+(`otPlatRadioEnableCsl`, `otPlatRadioResetCsl`,
+`otPlatRadioUpdateCslSampleTime`) reaches the radio before its next
+operation (`Radio::set_csl`); the radio then puts a CSL IE into its
+enhanced ACKs and writes the period and phase into every CSL IE it sends
+when the frame's SFD goes out. A CSL transmitter delays frames to a
+child's sample time (`mTxDelayBaseTime + mTxDelay`, `TxFrame::tx_at`) on a
+radio that reports `OT_RADIO_CAPS_TRANSMIT_TIMING`. The CSL accuracy and
+uncertainty are part of `RadioCaps`. `MacRadio` and `ProxyRadio` clear both
+timing capabilities.
+
 ## The radio state machine
 
 ```

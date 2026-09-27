@@ -197,6 +197,13 @@ pub fn dtls_active() -> bool {
 /// toggle like the device-type selection - except that, unlike those, the CLI
 /// archives are NOT part of the prebuilt artifacts, so it also forces an
 /// on-the-fly build (see [`prebuilt_validity`]).
+/// Whether the `csl` feature builds Coordinated Sampled Listening: the CSL
+/// receiver, the CSL transmitter and the microsecond platform timer the
+/// receiver schedules its windows with.
+pub fn csl_active() -> bool {
+    std::env::var_os("CARGO_FEATURE_CSL").is_some()
+}
+
 pub fn cli_active() -> bool {
     std::env::var_os("CARGO_FEATURE_CLI").is_some()
 }
@@ -397,6 +404,10 @@ pub fn prebuilt_validity() -> Result<(), String> {
     // contain neither, so the build must be produced on the fly.
     if cli_active() {
         parts.push("+cli (C CLI library)".to_string());
+    }
+
+    if csl_active() {
+        parts.push("+csl (CSL receiver and transmitter)".to_string());
     }
 
     // The prebuilt is built with OpenThread's default heap configuration (no
