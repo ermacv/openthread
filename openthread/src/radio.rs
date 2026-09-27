@@ -555,6 +555,25 @@ pub struct TxFrame<'a> {
     /// clock (`mTxDelayBaseTime + mTxDelay`), for a radio that reports
     /// [`Capabilities::TRANSMIT_TIMING`]; `None` transmits at once.
     pub tx_at: Option<u32>,
+    /// The Time IE the radio fills with the time sync sequence and the
+    /// network time - its clock plus the offset - when the frame's SFD goes
+    /// out; `None` for a frame without one.
+    pub time_sync: Option<TimeSyncIe>,
+}
+
+/// The Time IE of a frame to transmit, as OpenThread describes it in the
+/// frame's `otRadioIeInfo` (builds with the `time-sync` feature).
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct TimeSyncIe {
+    /// Offset of the Time IE content - the sequence byte, then eight bytes
+    /// of network time - from the start of the PSDU (`mTimeIeOffset`).
+    pub ie_offset: u8,
+    /// The time sync sequence (`mTimeSyncSeq`).
+    pub sequence: u8,
+    /// The network time minus the radio clock, in microseconds
+    /// (`mNetworkTimeOffset`).
+    pub network_time_offset: i64,
 }
 
 /// The clock of a radio's receive timestamps and scheduled operations, in

@@ -200,6 +200,18 @@ metrics of the frame's source. The default ignores the table, so the
 radio's ACKs carry no Link Metrics; `MacRadio` and `ProxyRadio` do not
 forward it.
 
+### C12. Time synchronization needs the radio to write the network time at the SFD
+
+With the `time-sync` feature OpenThread builds Thread network time
+synchronization. It describes the Time IE of a frame in the transmit
+buffer's `mIeInfo`, which the crate provides, and hands it to the radio as
+`TxFrame::time_sync`; the radio writes the time sync sequence and its clock
+plus the network time offset into the IE when the frame's SFD goes out,
+as ESP-IDF's port does in `ot_radio_transmit_sfd_done`. `otPlatTimeGet`
+reads the radio clock (`Radio::clock`), so OpenThread's offset and the
+radio's time share one epoch. `otPlatRadioSetChannelMaxTransmitPower` is
+accepted and ignored, as in ESP-IDF's port.
+
 ## The radio state machine
 
 ```

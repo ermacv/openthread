@@ -273,6 +273,26 @@ extern "C" fn otPlatRadioSetMacFrameCounterIfLarger(instance: *mut otInstance, f
     );
 }
 
+// --- Platform time (Thread network time synchronization) ---
+
+#[no_mangle]
+extern "C" fn otPlatTimeGet() -> u64 {
+    // The radio clock, which the radio also writes Time IEs from, as
+    // ESP-IDF's port reads `esp_timer` for both.
+    OtContext::callback(core::ptr::null()).plat_radio_now()
+}
+
+// As ESP-IDF's port, the radio keeps no per-channel maximum power: the
+// request is accepted and ignored.
+#[no_mangle]
+extern "C" fn otPlatRadioSetChannelMaxTransmitPower(
+    _instance: *mut otInstance,
+    _channel: u8,
+    _max_power: i8,
+) -> otError {
+    otError_OT_ERROR_NONE
+}
+
 // --- Link Metrics subject (builds with `link-metrics-subject`) ---
 
 #[no_mangle]

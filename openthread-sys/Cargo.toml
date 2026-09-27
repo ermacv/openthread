@@ -222,6 +222,9 @@ diagnostic = []
 ping-sender = []
 link-metrics-initiator = []
 link-metrics-subject = []
+# Thread network time synchronization: the radio fills each frame's Time IE
+# with the network time at its SFD (`TxFrame::time_sync`).
+time-sync = []
 mac-filter = []
 jam-detection = []
 netdiag-client = []

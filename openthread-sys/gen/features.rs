@@ -60,6 +60,7 @@ pub const KNOB_UNIVERSE: &[&str] = &[
     "OT_PING_SENDER",
     "OT_LINK_METRICS_INITIATOR",
     "OT_LINK_METRICS_SUBJECT",
+    "OT_TIME_SYNC",
     "OT_MAC_FILTER",
     "OT_JAM_DETECTION",
     "OT_CHILD_SUPERVISION",
@@ -116,6 +117,8 @@ pub const FEATURE_DEFINES: &[(&str, &[&str])] = &[
     ("PING_SENDER", &["OT_PING_SENDER"]),
     ("LINK_METRICS_INITIATOR", &["OT_LINK_METRICS_INITIATOR"]),
     ("LINK_METRICS_SUBJECT", &["OT_LINK_METRICS_SUBJECT"]),
+    // Thread network time synchronization; the radio fills the Time IE.
+    ("TIME_SYNC", &["OT_TIME_SYNC"]),
     ("MAC_FILTER", &["OT_MAC_FILTER"]),
     ("JAM_DETECTION", &["OT_JAM_DETECTION"]),
     ("CHILD_SUPERVISION", &["OT_CHILD_SUPERVISION"]),

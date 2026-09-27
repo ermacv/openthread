@@ -82,9 +82,9 @@ use sys::{
     otMessageGetBufferInfo, otMessagePriority_OT_MESSAGE_PRIORITY_NORMAL, otMessageRead,
     otMessageSettings, otMleCounters, otOperationalDataset, otOperationalDatasetTlvs,
     otPlatAlarmMilliFired, otPlatRadioEnergyScanDone, otPlatRadioReceiveDone, otPlatRadioTxDone,
-    otPlatRadioTxStarted, otRadioCaps, otRadioFrame, otSetStateChangedCallback, otTaskletsProcess,
-    otThreadGetDeviceRole, otThreadGetExtendedPanId, otThreadSetEnabled, otThreadSetLinkMode,
-    OT_RADIO_CAPS_ACK_TIMEOUT, OT_RADIO_FRAME_MAX_SIZE, OT_RADIO_RSSI_INVALID,
+    otPlatRadioTxStarted, otRadioCaps, otRadioFrame, otRadioIeInfo, otSetStateChangedCallback,
+    otTaskletsProcess, otThreadGetDeviceRole, otThreadGetExtendedPanId, otThreadSetEnabled,
+    otThreadSetLinkMode, OT_RADIO_CAPS_ACK_TIMEOUT, OT_RADIO_FRAME_MAX_SIZE, OT_RADIO_RSSI_INVALID,
 };
 
 /// A newtype wrapper over the native OpenThread error type (`otError`).
@@ -1665,7 +1665,16 @@ impl<'a> OpenThread<'a> {
     where
         R: Radio,
     {
-        let (cca_threshold, channel, power, psdu_len, retransmission, security_processed, tx_at) = {
+        let (
+            cca_threshold,
+            channel,
+            power,
+            psdu_len,
+            retransmission,
+            security_processed,
+            tx_at,
+            time_sync,
+        ) = {
             let mut ot = self.activate();
             let state = ot.state();
 
@@ -1689,6 +1698,14 @@ impl<'a> OpenThread<'a> {
                 tx_info.mIsSecurityProcessed(),
                 (tx_info.mTxDelay != 0)
                     .then(|| tx_info.mTxDelayBaseTime.wrapping_add(tx_info.mTxDelay)),
+                // OpenThread marks a frame with a Time IE by a nonzero offset.
+                Some(state.ot.radio_resources.snd_ie_info)
+                    .filter(|ie_info| ie_info.mTimeIeOffset != 0)
+                    .map(|ie_info| radio::TimeSyncIe {
+                        ie_offset: ie_info.mTimeIeOffset,
+                        sequence: ie_info.mTimeSyncSeq,
+                        network_time_offset: ie_info.mNetworkTimeOffset,
+                    }),
             )
         };
 
@@ -1713,6 +1730,7 @@ impl<'a> OpenThread<'a> {
             security_processed,
             header_updated: false,
             tx_at,
+            time_sync,
         };
 
         let result = radio.transmit_frame(&mut frame, Some(ack_psdu_buf)).await;
@@ -3191,10 +3209,16 @@ impl<'a> OtContext<'a> {
 
         let psdu = unsafe { core::slice::from_raw_parts_mut(frame.mPsdu, frame.mLength as _) };
 
-        state.ot.radio_resources.snd_frame = *frame;
-        state.ot.radio_resources.snd_psdu[..psdu.len()].copy_from_slice(psdu);
-        state.ot.radio_resources.snd_frame.mPsdu =
-            addr_of_mut!(state.ot.radio_resources.snd_psdu) as *mut _;
+        let radio_resources = &mut state.ot.radio_resources;
+        radio_resources.snd_frame = *frame;
+        radio_resources.snd_psdu[..psdu.len()].copy_from_slice(psdu);
+        radio_resources.snd_frame.mPsdu = addr_of_mut!(radio_resources.snd_psdu) as *mut _;
+        // The frame's IE information stays with the frame the radio sends.
+        let ie_info = unsafe { frame.mInfo.mTxInfo.mIeInfo };
+        if !ie_info.is_null() {
+            radio_resources.snd_ie_info = unsafe { *ie_info };
+        }
+        radio_resources.snd_frame.mInfo.mTxInfo.mIeInfo = addr_of_mut!(radio_resources.snd_ie_info);
 
         state.ot.radio_cmd.signal(RadioCommand::Tx);
 
@@ -3763,6 +3787,11 @@ struct RadioResources {
     snd_psdu: [u8; OT_RADIO_FRAME_MAX_SIZE as usize],
     /// The PSDU of the ACK frame send to `otPlatRadioReceiveDone`
     ack_psdu: [u8; OT_RADIO_FRAME_MAX_SIZE as usize],
+    /// The IE information of the frame OpenThread prepares (`mIeInfo` of
+    /// `tns_frame`), where it describes a Time IE.
+    tns_ie_info: otRadioIeInfo,
+    /// The IE information of the frame to be send by the radio.
+    snd_ie_info: otRadioIeInfo,
 }
 
 impl RadioResources {
@@ -3779,6 +3808,8 @@ impl RadioResources {
                 tns_psdu: MaybeUninit::zeroed().assume_init(),
                 snd_psdu: MaybeUninit::zeroed().assume_init(),
                 ack_psdu: MaybeUninit::zeroed().assume_init(),
+                tns_ie_info: MaybeUninit::zeroed().assume_init(),
+                snd_ie_info: MaybeUninit::zeroed().assume_init(),
             }
         }
     }
@@ -3795,6 +3826,10 @@ impl RadioResources {
         self.tns_frame.mPsdu = addr_of_mut!(self.tns_psdu) as *mut _;
         self.snd_frame.mPsdu = addr_of_mut!(self.snd_psdu) as *mut _;
         self.ack_frame.mPsdu = addr_of_mut!(self.ack_psdu) as *mut _;
+        // OpenThread describes a Time IE through the transmit buffer's
+        // `mIeInfo`, which the platform provides.
+        self.tns_frame.mInfo.mTxInfo.mIeInfo = addr_of_mut!(self.tns_ie_info);
+        self.snd_frame.mInfo.mTxInfo.mIeInfo = addr_of_mut!(self.snd_ie_info);
     }
 }
 
