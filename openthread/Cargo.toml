@@ -79,7 +79,7 @@ heap-int-16384 = ["openthread-sys/heap-int-16384"]
 heap-int-32768 = ["openthread-sys/heap-int-32768"]
 heap-int-49152 = ["openthread-sys/heap-int-49152"]
 heap-int-65528 = ["openthread-sys/heap-int-65528"]
-defmt = ["dep:defmt", "heapless/defmt", "embassy-time/defmt"]
+defmt = ["dep:defmt", "heapless/defmt", "embassy-time/defmt", "openthread-radio/defmt"]
 force-generate-bindings = ["openthread-sys/force-generate-bindings"]
 force-esp-riscv-gcc = ["openthread-sys/force-esp-riscv-gcc"]
 # Use GCC instead of clang
@@ -149,6 +149,7 @@ trel = ["openthread-sys/trel"]
 
 [dependencies]
 openthread-sys = { workspace = true, default-features = false }
+openthread-radio = { workspace = true, default-features = false }
 log = { workspace = true, default-features = false, optional = true }
 defmt = { workspace = true, default-features = false, optional = true, features = ["ip_in_core"] }
 scopeguard = { workspace = true, default-features = false }

@@ -5,7 +5,7 @@
 [![Documentation](https://img.shields.io/badge/docs-esp--rs-brightgreen)](https://esp-rs.github.io/esp-rs/openthread/index.html)
 [![Matrix](https://img.shields.io/matrix/esp-rs:matrix.org?label=join%20matrix&color=BEC5C9&logo=matrix)](https://matrix.to/#/#esp-rs:matrix.org)
 
-This repository hosts the [openthread](openthread), [openthread-sys](openthread-sys) and [examples](examples) crates.
+This repository hosts the [openthread](openthread), [openthread-radio](openthread-radio) (the radio trait, without the C library), [openthread-sys](openthread-sys) and [examples](examples) crates.
 
 For more information, consult the respective README of each crate.
 

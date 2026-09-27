@@ -1,0 +1,19 @@
+[package]
+name = "openthread-radio"
+version = "0.4.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+rust-version = "1.85"
+categories = ["embedded", "hardware-support", "no-std"]
+keywords = ["thread", "openthread", "ieee802154", "radio"]
+description = "The IEEE 802.15.4 radio trait of the openthread crate, without the OpenThread C library"
+repository = "https://github.com/esp-rs/openthread"
+
+[features]
+defmt = ["dep:defmt", "heapless/defmt", "embassy-time/defmt"]
+
+[dependencies]
+bitflags = { workspace = true, default-features = false }
+defmt = { workspace = true, default-features = false, optional = true }
+embassy-time = { workspace = true, default-features = false }
+heapless = { workspace = true, default-features = false }

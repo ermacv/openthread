@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "openthread",
+    "openthread-radio",
     "openthread-sys",
     "examples/std",
 ]
@@ -36,6 +37,7 @@ embassy-nrf = { version = "0.11", default-features = false }
 
 mbedtls-rs-sys = { version = "0.3", default-features = false }
 openthread-sys = { version = "0.4", path = "openthread-sys", default-features = false }
+openthread-radio = { version = "0.4", path = "openthread-radio", default-features = false }
 
 # build dependencies
 anyhow = { version = "1", default-features = false }
