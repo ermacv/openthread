@@ -570,8 +570,6 @@ pub struct SpinelRadio<'a, T> {
     /// The RCP's own defaults for the transmit power and the CCA threshold,
     /// read once during the handshake and reported through [`RadioCaps`].
     default_cca_threshold: i8,
-    csl_accuracy: RadioCaps::UNKNOWN_CSL_TIMING,
-    csl_uncertainty: RadioCaps::UNKNOWN_CSL_TIMING,
     /// The receive sensitivity read from the RCP's `PHY_RX_SENSITIVITY`
     /// during the handshake; the crate-wide default until then (and for RCP
     /// firmwares that do not implement the property).
@@ -630,8 +628,6 @@ where
             cca_threshold: RadioCaps::DEFAULT_CCA_THRESHOLD,
             default_tx_power: RadioCaps::DEFAULT_TX_POWER,
             default_cca_threshold: RadioCaps::DEFAULT_CCA_THRESHOLD,
-            csl_accuracy: RadioCaps::UNKNOWN_CSL_TIMING,
-            csl_uncertainty: RadioCaps::UNKNOWN_CSL_TIMING,
             sensitivity: RadioCaps::DEFAULT_RECEIVE_SENSITIVITY,
             src_match_dirty: false,
             rx_enabled: false,
