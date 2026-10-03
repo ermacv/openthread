@@ -578,17 +578,35 @@ pub struct TimeSyncIe {
 }
 
 /// The clock of a radio's receive timestamps and scheduled operations, in
-/// microseconds (`otPlatRadioGetNow`).
-pub type RadioClock = fn() -> u64;
-
-/// A live read of the radio's receive signal strength in dBm
-/// (`otPlatRadioGetRssi`); `None` when the radio cannot read it now.
-pub type RadioRssi = fn() -> Option<i8>;
+/// microseconds (`otPlatRadioGetNow`, and `otPlatTimeGet` for network time).
+///
+/// OpenThread reads it from its synchronous callbacks, outside the radio's
+/// own operations, so it is a reader of the radio's clock rather than a
+/// method of the radio: the platform passes it to the OpenThread
+/// constructor.
+pub trait RadioClock {
+    /// The radio clock now, in microseconds.
+    fn now_micros(&self) -> u64;
+}
 
 /// The `embassy-time` clock, for radios whose timestamps and schedules count
 /// in it.
-pub fn embassy_radio_clock() -> u64 {
-    embassy_time::Instant::now().as_micros()
+#[derive(Clone, Copy, Debug, Default)]
+pub struct EmbassyRadioClock;
+
+impl RadioClock for EmbassyRadioClock {
+    fn now_micros(&self) -> u64 {
+        embassy_time::Instant::now().as_micros()
+    }
+}
+
+/// A live read of the radio's receive signal strength in dBm
+/// (`otPlatRadioGetRssi`), from OpenThread's synchronous callbacks outside
+/// the radio's own operations. Without one, OpenThread is answered with the
+/// RSSI of the last received frame.
+pub trait RadioRssi {
+    /// The signal strength now, or `None` when the radio cannot read it.
+    fn rssi(&self) -> Option<i8>;
 }
 
 /// The Coordinated Sampled Listening state of a CSL receiver
@@ -842,21 +860,6 @@ pub trait Radio {
     /// - The meta-data associated with the received frame.
     async fn receive(&mut self, psdu_buf: &mut [u8]) -> Result<PsduMeta, Self::Error>;
 
-    /// The clock of the radio's receive timestamps and scheduled operations
-    /// (`otPlatRadioGetNow`), read once after [`init`](Radio::init). The
-    /// default is the `embassy-time` clock.
-    fn clock(&self) -> RadioClock {
-        embassy_radio_clock
-    }
-
-    /// The live RSSI read (`otPlatRadioGetRssi`), taken once after
-    /// [`init`](Radio::init). OpenThread calls it synchronously, outside the
-    /// radio's own operations. Without one, OpenThread is answered with the
-    /// RSSI of the last received frame.
-    fn rssi(&self) -> Option<RadioRssi> {
-        None
-    }
-
     /// Sleep, then receive on `channel` in the window that opens at `start`
     /// and lasts `duration` microseconds, then sleep again
     /// (`otPlatRadioReceiveAt`); `start` counts in the low 32 bits of the
@@ -993,14 +996,6 @@ where
 
     async fn receive(&mut self, psdu_buf: &mut [u8]) -> Result<PsduMeta, Self::Error> {
         T::receive(self, psdu_buf).await
-    }
-
-    fn clock(&self) -> RadioClock {
-        T::clock(self)
-    }
-
-    fn rssi(&self) -> Option<RadioRssi> {
-        T::rssi(self)
     }
 
     async fn receive_at(

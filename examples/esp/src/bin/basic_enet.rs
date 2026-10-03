@@ -90,7 +90,15 @@ async fn main(spawner: Spawner) {
 
     let ot_settings = mk_static!(SimpleRamSettings, SimpleRamSettings::new(ot_settings_buf));
 
-    let ot = OpenThread::new(ieee_eui64, rng, ot_settings, ot_resources).unwrap();
+    let ot = OpenThread::new(
+        ieee_eui64,
+        rng,
+        ot_settings,
+        &openthread::EmbassyRadioClock,
+        None,
+        ot_resources,
+    )
+    .unwrap();
 
     let (_enet_controller, enet_driver_runner, enet_driver) =
         enet::new(ot.clone(), enet_driver_state);

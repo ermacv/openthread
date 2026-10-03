@@ -131,7 +131,15 @@ async fn main(spawner: Spawner) {
         FlashSettings::new(flash, nvs_offset, ot_settings_buf)
     );
 
-    let ot = OpenThread::new(ieee_eui64, rng, ot_settings, ot_resources).unwrap();
+    let ot = OpenThread::new(
+        ieee_eui64,
+        rng,
+        ot_settings,
+        &openthread::EmbassyRadioClock,
+        None,
+        ot_resources,
+    )
+    .unwrap();
 
     spawner.spawn(
         run_ot(
