@@ -163,6 +163,9 @@ impl<'a> OpenThread<'a> {
     /// Arguments:
     /// - `ieee_eui64`: The IEEE EUI-64 address of the Radio device.
     /// - `rng`: A mutable reference to a random number generator that will be used by OpenThread.
+    /// - `clock`: The radio's clock (`otPlatRadioGetNow`): a reader of the clock of the radio
+    ///   OpenThread will run, such as [`radio::EmbassyRadioClock`].
+    /// - `rssi`: The radio's live RSSI read (`otPlatRadioGetRssi`), if it has one.
     /// - `resources`: A mutable reference to the OpenThread resources.
     ///
     /// Returns:
@@ -171,6 +174,8 @@ impl<'a> OpenThread<'a> {
         ieee_eui64: [u8; 8],
         rng: &'a mut dyn OtRng,
         settings: &'a mut dyn Settings,
+        clock: &'a dyn radio::RadioClock,
+        rssi: Option<&'a dyn radio::RadioRssi>,
         resources: &'a mut OtResources,
     ) -> Result<Self, OtError> {
         let acquired = OT_REFCNT.lock(|refcnt| {
@@ -196,6 +201,16 @@ impl<'a> OpenThread<'a> {
             unsafe {
                 core::mem::transmute::<&'a mut dyn Settings, &'static mut dyn Settings>(settings)
             },
+            unsafe {
+                core::mem::transmute::<&'a dyn radio::RadioClock, &'static dyn radio::RadioClock>(
+                    clock,
+                )
+            },
+            rssi.map(|rssi| unsafe {
+                core::mem::transmute::<&'a dyn radio::RadioRssi, &'static dyn radio::RadioRssi>(
+                    rssi,
+                )
+            }),
         );
 
         let state = unsafe {
@@ -219,6 +234,9 @@ impl<'a> OpenThread<'a> {
     /// Arguments:
     /// - `ieee_eui64`: The IEEE EUI-64 address of the Radio device.
     /// - `rng`: A mutable reference to a random number generator that will be used by OpenThread.
+    /// - `clock`: The radio's clock (`otPlatRadioGetNow`): a reader of the clock of the radio
+    ///   OpenThread will run, such as [`radio::EmbassyRadioClock`].
+    /// - `rssi`: The radio's live RSSI read (`otPlatRadioGetRssi`), if it has one.
     /// - `resources`: A mutable reference to the OpenThread resources.
     /// - `udp_resources`: A mutable reference to the OpenThread UDP resources.
     ///
@@ -228,6 +246,8 @@ impl<'a> OpenThread<'a> {
         ieee_eui64: [u8; 8],
         rng: &'a mut dyn OtRng,
         settings: &'a mut dyn Settings,
+        clock: &'a dyn radio::RadioClock,
+        rssi: Option<&'a dyn radio::RadioRssi>,
         resources: &'a mut OtResources,
         udp_resources: &'a mut OtUdpResources<UDP_SOCKETS, UDP_RX_SZ>,
     ) -> Result<Self, OtError> {
@@ -238,6 +258,16 @@ impl<'a> OpenThread<'a> {
             unsafe {
                 core::mem::transmute::<&'a mut dyn Settings, &'static mut dyn Settings>(settings)
             },
+            unsafe {
+                core::mem::transmute::<&'a dyn radio::RadioClock, &'static dyn radio::RadioClock>(
+                    clock,
+                )
+            },
+            rssi.map(|rssi| unsafe {
+                core::mem::transmute::<&'a dyn radio::RadioRssi, &'static dyn radio::RadioRssi>(
+                    rssi,
+                )
+            }),
         );
 
         let state = unsafe {
@@ -268,6 +298,9 @@ impl<'a> OpenThread<'a> {
     /// Arguments:
     /// - `ieee_eui64`: The IEEE EUI-64 address of the Radio device.
     /// - `rng`: A mutable reference to a random number generator that will be used by OpenThread.
+    /// - `clock`: The radio's clock (`otPlatRadioGetNow`): a reader of the clock of the radio
+    ///   OpenThread will run, such as [`radio::EmbassyRadioClock`].
+    /// - `rssi`: The radio's live RSSI read (`otPlatRadioGetRssi`), if it has one.
     /// - `resources`: A mutable reference to the OpenThread resources.
     /// - `srp_resources`: A mutable reference to the OpenThread SRP resources.
     ///
@@ -278,6 +311,8 @@ impl<'a> OpenThread<'a> {
         ieee_eui64: [u8; 8],
         rng: &'a mut dyn OtRng,
         settings: &'a mut dyn Settings,
+        clock: &'a dyn radio::RadioClock,
+        rssi: Option<&'a dyn radio::RadioRssi>,
         resources: &'a mut OtResources,
         srp_resources: &'a mut OtSrpResources<SRP_SVCS, SRP_BUF_SZ>,
     ) -> Result<Self, OtError> {
@@ -288,6 +323,16 @@ impl<'a> OpenThread<'a> {
             unsafe {
                 core::mem::transmute::<&'a mut dyn Settings, &'static mut dyn Settings>(settings)
             },
+            unsafe {
+                core::mem::transmute::<&'a dyn radio::RadioClock, &'static dyn radio::RadioClock>(
+                    clock,
+                )
+            },
+            rssi.map(|rssi| unsafe {
+                core::mem::transmute::<&'a dyn radio::RadioRssi, &'static dyn radio::RadioRssi>(
+                    rssi,
+                )
+            }),
         );
 
         let state = unsafe {
@@ -317,6 +362,9 @@ impl<'a> OpenThread<'a> {
     /// Arguments:
     /// - `ieee_eui64`: The IEEE EUI-64 address of the Radio device.
     /// - `rng`: A mutable reference to a random number generator that will be used by OpenThread.
+    /// - `clock`: The radio's clock (`otPlatRadioGetNow`): a reader of the clock of the radio
+    ///   OpenThread will run, such as [`radio::EmbassyRadioClock`].
+    /// - `rssi`: The radio's live RSSI read (`otPlatRadioGetRssi`), if it has one.
     /// - `resources`: A mutable reference to the OpenThread resources.
     /// - `udp_resources`: A mutable reference to the OpenThread UDP resources.
     /// - `srp_resources`: A mutable reference to the OpenThread SRP resources.
@@ -333,6 +381,8 @@ impl<'a> OpenThread<'a> {
         ieee_eui64: [u8; 8],
         rng: &'a mut dyn OtRng,
         settings: &'a mut dyn Settings,
+        clock: &'a dyn radio::RadioClock,
+        rssi: Option<&'a dyn radio::RadioRssi>,
         resources: &'a mut OtResources,
         udp_resources: &'a mut OtUdpResources<UDP_SOCKETS, UDP_RX_SZ>,
         srp_resources: &'a mut OtSrpResources<SRP_SVCS, SRP_BUF_SZ>,
@@ -345,6 +395,16 @@ impl<'a> OpenThread<'a> {
             unsafe {
                 core::mem::transmute::<&'a mut dyn Settings, &'static mut dyn Settings>(settings)
             },
+            unsafe {
+                core::mem::transmute::<&'a dyn radio::RadioClock, &'static dyn radio::RadioClock>(
+                    clock,
+                )
+            },
+            rssi.map(|rssi| unsafe {
+                core::mem::transmute::<&'a dyn radio::RadioRssi, &'static dyn radio::RadioRssi>(
+                    rssi,
+                )
+            }),
         );
 
         let state = unsafe {
@@ -1420,8 +1480,6 @@ impl<'a> OpenThread<'a> {
             }
 
             state.ot.radio_caps = caps.phy.bits();
-            state.ot.radio_clock = radio.clock();
-            state.ot.radio_rssi = radio.rssi();
             state.ot.radio_csl_accuracy = caps.csl_accuracy;
             state.ot.radio_csl_uncertainty = caps.csl_uncertainty;
             state.ot.radio_sensitivity = caps.receive_sensitivity;
@@ -2124,6 +2182,8 @@ impl OtResources {
         ieee_eui64: [u8; 8],
         rng: &'static mut dyn OtRng,
         settings: &'static mut dyn Settings,
+        clock: &'static dyn radio::RadioClock,
+        rssi: Option<&'static dyn radio::RadioRssi>,
     ) -> &RefCell<OtState<'static>> {
         let radio_resources = unsafe { self.radio_resources.assume_init_mut() };
         let dataset_resources = unsafe { self.dataset_resources.assume_init_mut() };
@@ -2183,8 +2243,8 @@ impl OtResources {
                 initiators: heapless::Vec::new(),
             },
             radio_enh_ack_probing_changed: false,
-            radio_clock: radio::embassy_radio_clock,
-            radio_rssi: None,
+            radio_clock: clock,
+            radio_rssi: rssi,
             radio_csl_accuracy: radio::RadioCaps::UNKNOWN_CSL_TIMING,
             radio_csl_uncertainty: radio::RadioCaps::UNKNOWN_CSL_TIMING,
             #[cfg(feature = "csl")]
@@ -2975,7 +3035,7 @@ impl<'a> OtContext<'a> {
     fn plat_radio_get_rssi(&mut self) -> i8 {
         let state = self.state();
         let rssi = match state.ot.radio_rssi {
-            Some(read) => read().unwrap_or(OT_RADIO_RSSI_INVALID as i8),
+            Some(read) => read.rssi().unwrap_or(OT_RADIO_RSSI_INVALID as i8),
             None => state.ot.last_rssi,
         };
         trace!("Plat radio get RSSI callback, RSSI: {}", rssi);
@@ -3262,7 +3322,7 @@ impl<'a> OtContext<'a> {
     }
 
     fn plat_radio_now(&mut self) -> u64 {
-        (self.state().ot.radio_clock)()
+        self.state().ot.radio_clock.now_micros()
     }
 
     fn plat_radio_csl_timing(&mut self) -> (u8, u8) {
@@ -3701,9 +3761,9 @@ struct OtState<'a> {
     /// changed since the radio last took it.
     radio_enh_ack_probing_changed: bool,
     /// The radio clock (`otPlatRadioGetNow`).
-    radio_clock: radio::RadioClock,
+    radio_clock: &'a dyn radio::RadioClock,
     /// The radio's live RSSI read (`otPlatRadioGetRssi`), if it has one.
-    radio_rssi: Option<radio::RadioRssi>,
+    radio_rssi: Option<&'a dyn radio::RadioRssi>,
     /// `otPlatRadioGetCslAccuracy`, from the radio's capabilities.
     radio_csl_accuracy: u8,
     /// `otPlatRadioGetCslUncertainty`, from the radio's capabilities.

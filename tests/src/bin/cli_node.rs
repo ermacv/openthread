@@ -339,7 +339,15 @@ async fn main_task(spawner: Spawner, args: NodeArgs, radio_link: Option<VtLink>)
     let ot_resources = OT_RESOURCES.init(OtResources::new());
     let ot_settings = OT_SETTINGS.init(FileSettings::new(settings_path.clone()));
 
-    let ot = OpenThread::new(ieee_eui64, rng, ot_settings, ot_resources).unwrap();
+    let ot = OpenThread::new(
+        ieee_eui64,
+        rng,
+        ot_settings,
+        &openthread::EmbassyRadioClock,
+        None,
+        ot_resources,
+    )
+    .unwrap();
 
     // A hardware run takes precedence over both simulated media: it must never
     // quietly degrade into a simulated one (see `openthread_tests::hw`).

@@ -89,8 +89,16 @@ async fn main_task(spawner: Spawner) {
     // Pure DNS *client*: no SRP resources needed. We still `srp_autostart()`
     // below (works without SRP resources) so the DNS client auto-discovers its
     // server.
-    let ot = OpenThread::new_with_udp(ieee_eui64, rng, ot_settings, ot_resources, ot_udp_resources)
-        .unwrap();
+    let ot = OpenThread::new_with_udp(
+        ieee_eui64,
+        rng,
+        ot_settings,
+        &openthread::EmbassyRadioClock,
+        None,
+        ot_resources,
+        ot_udp_resources,
+    )
+    .unwrap();
 
     // The radio/transport buffers, in `const`-constructed statics (`.bss`), so
     // they never travel through the stack.

@@ -85,8 +85,16 @@ async fn main_task(spawner: Spawner) {
     let ot_settings_buf = OT_SETTINGS_BUF.init([0; 1024]);
     let ot_settings = OT_SETTINGS.init(SimpleRamSettings::new(ot_settings_buf));
 
-    let ot = OpenThread::new_with_udp(ieee_eui64, rng, ot_settings, ot_resources, ot_udp_resources)
-        .unwrap();
+    let ot = OpenThread::new_with_udp(
+        ieee_eui64,
+        rng,
+        ot_settings,
+        &openthread::EmbassyRadioClock,
+        None,
+        ot_resources,
+        ot_udp_resources,
+    )
+    .unwrap();
 
     // The remote radio: a `SpinelRadio` over the host serial port (HDLC-framed).
     // Unlike the embedded examples there is no `ProxyRadio` / high-priority

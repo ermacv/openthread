@@ -231,7 +231,15 @@ async fn run_node(
 
     defmt::info!("ot init");
 
-    let ot = OpenThread::new(ieee_eui64, rng, ot_settings, ot_resources).unwrap();
+    let ot = OpenThread::new(
+        ieee_eui64,
+        rng,
+        ot_settings,
+        &openthread::EmbassyRadioClock,
+        None,
+        ot_resources,
+    )
+    .unwrap();
 
     defmt::info!("ot up");
 

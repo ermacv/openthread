@@ -98,6 +98,8 @@ async fn main_task(spawner: Spawner) {
         ieee_eui64,
         rng,
         ot_settings,
+        &openthread::EmbassyRadioClock,
+        None,
         ot_resources,
         ot_udp_resources,
         ot_srp_resources,

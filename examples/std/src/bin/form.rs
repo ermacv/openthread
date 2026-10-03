@@ -73,7 +73,15 @@ async fn main_task(spawner: Spawner) {
     let ot_settings_buf = OT_SETTINGS_BUF.init([0; 1024]);
     let ot_settings = OT_SETTINGS.init(SimpleRamSettings::new(ot_settings_buf));
 
-    let ot = OpenThread::new(ieee_eui64, rng, ot_settings, ot_resources).unwrap();
+    let ot = OpenThread::new(
+        ieee_eui64,
+        rng,
+        ot_settings,
+        &openthread::EmbassyRadioClock,
+        None,
+        ot_resources,
+    )
+    .unwrap();
 
     static RADIO_RESOURCES: ConstStaticCell<SpinelRadioResources> =
         ConstStaticCell::new(SpinelRadioResources::new());
